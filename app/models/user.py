@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import Column, Integer, String, Boolean, DateTime
 from sqlalchemy.orm import relationship
 from app.core.database import Base
@@ -12,7 +12,7 @@ class User(Base):
     password_hash = Column(String(255), nullable=False)
     is_active = Column(Boolean, default=True, nullable=False)
     is_admin = Column(Boolean, default=False, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
 
     # Relationships
     sessions = relationship("ChatSession", back_populates="user", cascade="all, delete-orphan")
