@@ -65,3 +65,13 @@ class ChatLogItem(BaseModel):
 class ChatLogsResponse(BaseModel):
     total: int
     items: List[ChatLogItem]
+
+
+class ChatStatsResponse(BaseModel):
+    total_messages: int = Field(..., description="총 대화 메시지 수 (질문 + 답변)")
+    total_questions: int = Field(..., description="총 사용자 질문 수")
+    total_answers: int = Field(..., description="총 AI 답변 수")
+    total_sessions: int = Field(..., description="총 대화 세션 수")
+    avg_latency_ms: int = Field(..., description="평균 AI 응답 지연시간 (ms)")
+    success_rate_percent: float = Field(..., description="AI 응답 성공률 (%)")
+
