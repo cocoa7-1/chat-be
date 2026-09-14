@@ -1,4 +1,4 @@
-﻿# 🤖 Role 3: AI 파이프라인 & 채팅 API (Chat & AI) 담당자 완벽 가이드
+# 🤖 Role 3: AI 파이프라인 & 채팅 API (Chat & AI) 담당자 완벽 가이드
 
 > **환영합니다!** 본 문서는 **Google GenAI (Gemma 4 26B / Gemini) 연동, Server-Sent Events (SSE) 실시간 토큰 스트리밍, 대화 문맥(Context) 주입 및 타임아웃/장애 대응**을 완벽하게 마스터하기 위한 실전 가이드입니다.
 

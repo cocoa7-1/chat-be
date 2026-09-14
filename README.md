@@ -1,4 +1,4 @@
-﻿# 🏗️ 건설 안전 & 시공 전문 AI 튜터 - 백엔드 API (`chat-be`)
+# 🏗️ 건설 안전 & 시공 전문 AI 튜터 - 백엔드 API (`chat-be`)
 
 FastAPI 기반의 실시간 스트리밍 건설 안전 & 시공 전문 AI 챗봇 백엔드 서비스입니다. Google AI Studio Gemma 4 26B API 연동, Server-Sent Events (SSE) 실시간 토큰 스트리밍, SQLite DB 대화 로그 영속화, JWT 기반 사용자 인증, 구조화된 4대 로깅 시스템 및 Vercel/AWS EC2 배포 파이프라인을 지원합니다.
 
@@ -68,19 +68,11 @@ chat-be/
 
 ## ⚡ 빠른 시작 (Getting Started)
 
-### 1. 가상환경 생성 및 패키지 설치
+### 1. 가상환경 생성 및 패키지 설치 (`uv`)
 ```bash
-# 가상환경 생성
-python -m venv .venv
-
-# 가상환경 활성화 (Windows PowerShell)
-.venv\Scripts\Activate.ps1
-
-# 가상환경 활성화 (Mac/Linux)
-# source .venv/bin/activate
-
-# 의존성 패키지 설치
-pip install -r requirements.txt
+# uv 기반 가상환경 생성 및 초고속 의존성 설치
+uv venv
+uv pip install -r requirements.txt
 ```
 
 ### 2. 환경변수 설정
@@ -111,9 +103,10 @@ GEMINI_MODEL_NAME=gemini-2.5-flash
 AI_TIMEOUT_SECONDS=10
 ```
 
-### 3. 서버 실행
+### 3. 서버 실행 (`uv run`)
 ```bash
-uvicorn app.main:app --reload --port 8000
+# 가상환경 수동 활성화 없이 바로 실행
+uv run uvicorn app.main:app --reload --port 8000
 ```
 - Swagger UI (API 문서): `http://localhost:8000/docs`
 - ReDoc: `http://localhost:8000/redoc`
@@ -123,14 +116,14 @@ uvicorn app.main:app --reload --port 8000
 ## 🧪 테스트 및 품질 검증
 
 ```bash
-# 전체 단위 테스트 실행
-pytest
+# 전체 단위 테스트 실행 (uv run)
+uv run pytest tests/ -v
 
-# 로그 적재 확인 스크립트
-python scripts/check_logs.py
+# 로그 적재 확인 스크립트 (uv run)
+uv run python scripts/check_logs.py
 
-# API 동작 일괄 테스트
-python scripts/test_api.py
+# API 동작 일괄 테스트 (uv run)
+uv run python scripts/test_api.py
 ```
 
 ---
