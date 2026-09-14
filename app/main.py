@@ -6,6 +6,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, status
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
@@ -56,12 +57,21 @@ app.add_middleware(
 # 2. Register Exception Handlers
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    """Standardized validation error response."""
+    """Standardized validation error response.
+
+    pydantic이 field_validator에서 발생한 ValueError를 errors()의 ctx에
+    "원본 예외 객체" 그대로 담아 보내는 경우가 있어(JSON으로 직렬화 불가),
+    ctx는 제외하고 사람이 읽는 msg만 남겨서 안전하게 직렬화한다.
+    """
     errors = exc.errors()
     msg = errors[0].get("msg", "입력값 검증에 실패했습니다.") if errors else "입력값 검증 오류"
+    safe_errors = [
+        {"type": e.get("type"), "loc": e.get("loc"), "msg": e.get("msg"), "input": e.get("input")}
+        for e in errors
+    ]
     return JSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-        content={"detail": msg, "errors": errors}
+        content=jsonable_encoder({"detail": msg, "errors": safe_errors})
     )
 
 # 3. Root & Health Check Endpoint
