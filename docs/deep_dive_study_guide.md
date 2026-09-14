@@ -101,7 +101,7 @@ develop (통합 개발 베이스라인)
 - **질문**: "`uv`를 쓰는데 `requirements.txt`가 왜 여전히 필요한가요?"
 - **해답**:
   - `requirements.txt`는 파이썬 생태계의 **"표준 의존성 명세서(Specification Sheet)"**입니다.
-  - `uv`는 그 명세서를 버리는 것이 아니라, **명세서를 10~100배 빠른 속도로 설치해주는 '초고속 실행 엔진'(`uv pip install -r requirements.txt`)**입니다.
+  - `uv`는 그 명세서를 버리는 것이 아니라, **명세서를 10-100배 빠른 속도로 설치해주는 '초고속 실행 엔진'(`uv pip install -r requirements.txt`)**입니다.
   - 팀원 중 `uv`가 없는 개발자나 AWS EC2/클라우드 배포 스크립트(`pip install -r requirements.txt`)와의 100% 호환성을 보장하기 위해 `requirements.txt`는 단일 진실 공급원(SSOT)으로 반드시 유지해야 합니다.
 
 ### [Q5] 4대 표준 로깅 이벤트와 지연시간(Latency) 추적 원리
