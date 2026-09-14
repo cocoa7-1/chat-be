@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field, ConfigDict, field_validator
 
 class UserCreate(BaseModel):
     username: str = Field(..., min_length=3, max_length=30, description="사용자 아이디 (3~30자)")
-    password: str = Field(..., min_length=4, max_length=100, description="비밀번호 (4자 이상)")
+    password: str = Field(..., min_length=8, max_length=100, description="비밀번호 (8자 이상)")
 
     @field_validator("username")
     @classmethod
@@ -18,8 +18,8 @@ class UserCreate(BaseModel):
     @field_validator("password")
     @classmethod
     def validate_password(cls, v: str) -> str:
-        if not v or len(v.strip()) < 4:
-            raise ValueError("비밀번호는 최소 4자 이상이어야 합니다.")
+        if not v or len(v.strip()) < 8:
+            raise ValueError("비밀번호는 최소 8자 이상이어야 합니다.")
         return v
 
 
