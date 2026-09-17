@@ -57,3 +57,15 @@ class Token(BaseModel):
 class TokenData(BaseModel):
     user_id: Optional[int] = None
     username: Optional[str] = None
+
+
+class PasswordChange(BaseModel):
+    current_password: str = Field(..., description="현재 비밀번호")
+    new_password: str = Field(..., min_length=8, max_length=100, description="새 비밀번호 (8자 이상)")
+
+    @field_validator("new_password")
+    @classmethod
+    def validate_new_password(cls, v: str) -> str:
+        if not v or len(v.strip()) < 8:
+            raise ValueError("비밀번호는 최소 8자 이상이어야 합니다.")
+        return v
