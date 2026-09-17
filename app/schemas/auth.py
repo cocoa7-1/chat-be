@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field, ConfigDict, field_validator
 
 class UserCreate(BaseModel):
     username: str = Field(..., min_length=3, max_length=30, description="사용자 아이디 (3~30자)")
+    nickname: str = Field(..., min_length=1, max_length=30, description="닉네임 (1~30자)")
     password: str = Field(..., min_length=8, max_length=100, description="비밀번호 (8자 이상)")
 
     @field_validator("username")
@@ -13,6 +14,14 @@ class UserCreate(BaseModel):
         v = v.strip()
         if not v:
             raise ValueError("아이디를 입력해주세요.")
+        return v
+
+    @field_validator("nickname")
+    @classmethod
+    def validate_nickname(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("닉네임을 입력해주세요.")
         return v
 
     @field_validator("password")
@@ -31,6 +40,7 @@ class UserLogin(BaseModel):
 class UserResponse(BaseModel):
     id: int
     username: str
+    nickname: str
     is_active: bool
     is_admin: bool
     created_at: datetime
