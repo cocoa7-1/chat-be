@@ -15,7 +15,7 @@ def test_database_models_and_relationships():
     try:
         # Create user
         username = f"dbuser_{int(time.time())}"
-        user = User(username=username, password_hash=get_password_hash("pass123"))
+        user = User(username=username, nickname="DB테스트", password_hash=get_password_hash("pass123"))
         db.add(user)
         db.commit()
         db.refresh(user)
@@ -55,7 +55,7 @@ def test_log_pagination_and_session_filtering():
     password = "LogPassword123"
 
     # Register & login
-    client.post("/api/v1/auth/register", json={"username": username, "password": password})
+    client.post("/api/v1/auth/register", json={"username": username, "nickname": "로그테스터", "password": password})
     login_res = client.post("/api/v1/auth/login", json={"username": username, "password": password})
     assert login_res.status_code == 200
 
@@ -98,7 +98,7 @@ def test_log_statistics_endpoint():
     password = "StatsPassword123"
 
     # Register & login
-    client.post("/api/v1/auth/register", json={"username": username, "password": password})
+    client.post("/api/v1/auth/register", json={"username": username, "nickname": "통계테스터", "password": password})
     client.post("/api/v1/auth/login", json={"username": username, "password": password})
 
     # Create session and stream chat

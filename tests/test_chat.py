@@ -10,7 +10,7 @@ def test_chat_pipeline():
     username = f"chatuser_{int(time.time())}"
     password = "chatPassword123"
 
-    client.post("/api/v1/auth/register", json={"username": username, "password": password})
+    client.post("/api/v1/auth/register", json={"username": username, "nickname": "채팅테스터", "password": password})
     login_res = client.post("/api/v1/auth/login", json={"username": username, "password": password})
     assert login_res.status_code == 200
 
