@@ -80,7 +80,7 @@ uv run uvicorn app.main:app --port 8000 --reload
 
 ---
 
-### 🟢 Step 3: 아이디(username) 공백 및 특수문자 검증 로직 추가
+### 🟢 Step 3: 아이디(username) 공백 및 최소 길이 검증 로직 추가
 - **파일**: `app/schemas/auth.py`
 - **작업**: `validate_username`에서 앞뒤 공백 제거(`strip()`) 후 3자 미만 차단.
 - **검증**: `uv run pytest tests/test_auth.py`
@@ -89,15 +89,15 @@ uv run uvicorn app.main:app --port 8000 --reload
 
 ---
 
-### 🟡 Step 4: 건설 현장 직책(role) 열거형(Enum) 및 모델 컬럼 추가
+### 🟡 Step 4: 건설 현장 직책(role) 모델 컬럼 추가
 - **파일**: `app/models/user.py`
 - **작업**: `User` 테이블에 `role` 컬럼 추가 (기본값: `"site_worker"` / 허용값: `safety_manager`, `site_worker`, `field_engineer`).
   ```python
-  role: Mapped[str] = mapped_column(String(30), default="site_worker", nullable=False)
+  role = Column(String(30), default="site_worker", nullable=False)  # 일반 현장작업자(기본 역할)
   ```
 - **검증**: `uv run pytest tests/test_auth.py`
 - **커밋 4**: `feat(user): Add construction site role column to User database model`
-- **동료 한 줄 설명**: "우리 서비스가 건설 안전 튜터니까, DB 유저 테이블에 현장 작업자인지 안전관리자인지 구분하는 직책 칸을 만들었어요."
+- **동료 한 줄 설명**: "우리 서비스가 건설 안전 튜터니까, DB 유저 테이블에 현장 작업자인지 안전관리자인지 구분하는 직책 칸을 만들었어요. 기본값은 일반 현장작업자(site_worker)입니다."
 
 ---
 
