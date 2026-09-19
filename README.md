@@ -1,6 +1,6 @@
-# 🏗️ 건설 안전 & 시공 전문 AI 튜터 - 백엔드 API (`chat-be`)
+# 🏗️ 건설 도메인 지식 & 상식 Q&A 챗봇 - 백엔드 API (`chat-be`)
 
-FastAPI 기반의 실시간 스트리밍 건설 안전 & 시공 전문 AI 챗봇 백엔드 서비스입니다. Google AI Studio Gemma 4 26B API 연동, Server-Sent Events (SSE) 실시간 토큰 스트리밍, SQLite DB 대화 로그 영속화, JWT 기반 사용자 인증, 구조화된 4대 로깅 시스템 및 Vercel/AWS EC2 배포 파이프라인을 지원합니다.
+FastAPI 기반의 실시간 스트리밍 건설 도메인 지식 & 상식 Q&A 챗봇 백엔드 서비스입니다. 시공/공정, 인허가 절차, 계약/비용, 참여주체, 자재/구조, 헷갈리는 개념(리모델링 vs 재건축), 플랜트 건설 등 7대 핵심 카테고리 29개 용어 및 5대 FAQ에 특화되어 있습니다. Google AI Studio Gemma 4 26B API 연동, Server-Sent Events (SSE) 실시간 토큰 스트리밍, SQLite DB 대화 로그 영속화, JWT 기반 사용자 인증, 구조화된 4대 로깅 시스템 및 Vercel/AWS EC2 배포 파이프라인을 지원합니다.
 
 ---
 

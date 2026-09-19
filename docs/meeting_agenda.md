@@ -14,8 +14,8 @@
    - **백엔드 (`chat-be`)**: Python, FastAPI, SQLite, SQLAlchemy 2.0 ORM, Google GenAI SDK
      * **배포 방식**: [AWS EC2 Free Tier](https://aws.amazon.com) 단일 인스턴스 데몬 배포
 2. **도메인 컨셉 확정**
-   - **컨셉**: 팀원의 건설 실무 배경을 살려 **"🏗️ 건설 안전 & 시공 전문 AI 튜터"**로 특화
-   - **타겟 지식**: 산업안전보건법, 중대재해처벌법, 콘크리트/가설구조물 시공 지침, TBM 위험성 평가
+   - **컨셉**: 팀원의 건설 실무 배경을 살려 **"🏗️ 건설 도메인 지식 & 상식 Q&A 챗봇"**으로 특화
+   - **타겟 지식**: 시공/공정, 인허가, 계약/비용, 참여주체, 자재/구조, 개념비교, 플랜트 등 7대 실무/상식 카테고리 (docs/domain_knowledge.md 참조)
 3. **AI 모델 선정**
    - Google AI Studio **Gemma 4 26B (`gemma-4-26b-a4b-it`)** 채택 (빠른 TTFT, 넉넉한 무료 할당량, 30초 타임아웃 방어 및 스마트 Mock 모드)
 
