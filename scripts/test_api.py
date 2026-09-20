@@ -33,7 +33,7 @@ def run_tests():
 
     # 1. Register
     print("\n[Step 1] 회원가입 테스트 (/api/v1/auth/register)...")
-    res = client.post("/api/v1/auth/register", json={"username": username, "password": password})
+    res = client.post("/api/v1/auth/register", json={"username": username, "nickname": "스터디학생", "password": password})
     assert res.status_code == 201, f"회원가입 실패: {res.text}"
     print(f"  [OK] 회원가입 성공: ID={res.json()['id']}, Username={res.json()['username']}")
 
