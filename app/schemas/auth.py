@@ -2,11 +2,14 @@ from datetime import datetime
 from typing import Optional
 from pydantic import BaseModel, Field, ConfigDict, field_validator
 
+ALLOWED_ROLES = ("safety_manager", "site_worker", "field_engineer")
+
 
 class UserCreate(BaseModel):
     username: str = Field(..., min_length=3, max_length=30, description="사용자 아이디 (3~30자)")
     nickname: str = Field(..., min_length=1, max_length=30, description="닉네임 (1~30자)")
     password: str = Field(..., min_length=8, max_length=100, description="비밀번호 (8자 이상)")
+    role: Optional[str] = Field("site_worker", description="건설 현장 직책 (safety_manager/site_worker/field_engineer)")
 
     @field_validator("username")
     @classmethod
@@ -29,6 +32,15 @@ class UserCreate(BaseModel):
     def validate_password(cls, v: str) -> str:
         if not v or len(v.strip()) < 8:
             raise ValueError("비밀번호는 최소 8자 이상이어야 합니다.")
+        return v
+
+    @field_validator("role")
+    @classmethod
+    def validate_role(cls, v: Optional[str]) -> str:
+        if not v:
+            return "site_worker"
+        if v not in ALLOWED_ROLES:
+            raise ValueError(f"직책은 {', '.join(ALLOWED_ROLES)} 중 하나여야 합니다.")
         return v
 
 
