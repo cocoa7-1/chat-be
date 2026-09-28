@@ -53,6 +53,7 @@ class UserResponse(BaseModel):
     id: int
     username: str
     nickname: str
+    role: str
     is_active: bool
     is_admin: bool
     created_at: datetime
