@@ -168,6 +168,59 @@ def test_change_password_too_short():
     assert res.status_code == 422
 
 
+def test_register_with_construction_role():
+    client = TestClient(app)
+    username = f"testuser_{int(time.time())}_role"
+    password = "securePassword123"
+
+    # 1. safety_manager 직책으로 회원가입
+    reg_res = client.post("/api/v1/auth/register", json={
+        "username": username,
+        "nickname": "안전관리자",
+        "password": password,
+        "role": "safety_manager"
+    })
+    assert reg_res.status_code == 201
+    assert reg_res.json()["role"] == "safety_manager"
+
+    # 2. 로그인 후 /me 에서도 직책이 그대로 돌아와야 함
+    client.post("/api/v1/auth/login", json={
+        "username": username,
+        "password": password
+    })
+    me_res = client.get("/api/v1/auth/me")
+    assert me_res.status_code == 200
+    assert me_res.json()["role"] == "safety_manager"
+
+
+def test_register_without_role_defaults_to_site_worker():
+    client = TestClient(app)
+    username = f"testuser_{int(time.time())}_defrole"
+
+    # role을 아예 안 보내면 기본값 site_worker 여야 함
+    res = client.post("/api/v1/auth/register", json={
+        "username": username,
+        "nickname": "기본직책유저",
+        "password": "securePassword123"
+    })
+    assert res.status_code == 201
+    assert res.json()["role"] == "site_worker"
+
+
+def test_register_with_invalid_role_rejection():
+    client = TestClient(app)
+    username = f"testuser_{int(time.time())}_badrole"
+
+    # 허용되지 않은 직책 값이면 422가 나야 함
+    res = client.post("/api/v1/auth/register", json={
+        "username": username,
+        "nickname": "잘못된직책유저",
+        "password": "securePassword123",
+        "role": "ceo"
+    })
+    assert res.status_code == 422
+
+
 def test_change_password_requires_auth():
     # 로그인하지 않은 클라이언트가 비밀번호 변경을 시도하면 401이 나야 함
     fresh_client = TestClient(app)
