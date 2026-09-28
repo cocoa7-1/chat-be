@@ -11,6 +11,7 @@ class User(Base):
     username = Column(String(50), unique=True, index=True, nullable=False)
     nickname = Column(String(30), nullable=False)
     password_hash = Column(String(255), nullable=False)
+    role = Column(String(30), default="site_worker", nullable=False)  # 일반 현장작업자(기본 역할)
     is_active = Column(Boolean, default=True, nullable=False)
     is_admin = Column(Boolean, default=False, nullable=False)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
