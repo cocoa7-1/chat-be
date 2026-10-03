@@ -54,3 +54,7 @@ Thumbs.db
 .coverage
 htmlcov/
 .pytest_cache/
+
+# Mission raw reference assets
+mission.html
+mission_text.txt

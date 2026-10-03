@@ -1,19 +1,19 @@
-# 🚀 AI Learning Tutor - 백엔드 API (`chat-be`)
+# 🏗️ 건설 도메인 지식 & 상식 Q&A 챗봇 - 백엔드 API (`chat-be`)
 
-FastAPI 기반의 실시간 스트리밍 AI 챗봇 백엔드 서비스입니다. Google Gemini API 연동, Server-Sent Events (SSE) 토큰 스트리밍, SQLite DB 대화 로그 영속화, JWT 기반 사용자 인증 및 구조화된 로깅 시스템을 제공합니다.
+FastAPI 기반의 실시간 스트리밍 건설 도메인 지식 & 상식 Q&A 챗봇 백엔드 서비스입니다. 시공/공정, 인허가 절차, 계약/비용, 참여주체, 자재/구조, 헷갈리는 개념(리모델링 vs 재건축), 플랜트 건설 등 7대 핵심 카테고리 29개 용어 및 5대 FAQ에 특화되어 있습니다. Google AI Studio Gemma 4 26B API 연동, Server-Sent Events (SSE) 실시간 토큰 스트리밍, SQLite DB 대화 로그 영속화, JWT 기반 사용자 인증, 구조화된 4대 로깅 시스템 및 Vercel/AWS EC2 배포 파이프라인을 지원합니다.
 
 ---
 
-## 👥 팀원 역할 분담 및 가이드 문서
+## 👥 4인 팀 역할 분담 및 브랜치 가이드
 
-본 레포지토리는 4인 팀 협업을 위해 모듈형으로 명확히 역할이 분리되어 있습니다:
+본 레포지토리는 4인 팀 협업과 미션 요구사항 충족을 위해 명확하게 역할과 브랜치가 분리되어 있습니다:
 
-| 역할 (Role) | 주요 담당 모듈 | 상세 가이드 문서 |
-| :--- | :--- | :--- |
-| 🛡️ **Role 1: 인증 & 보안 (Auth)** | `app/api/v1/auth.py`, `app/core/security.py`, `app/models/user.py` | [📖 Auth 가이드](docs/roles/auth_guide.md) |
-| 💾 **Role 2: 데이터 & 로깅 (Log/DB)** | `app/api/v1/logs.py`, `app/core/database.py`, `app/models/chat.py` | [📖 Log/DB 가이드](docs/roles/log_db_guide.md) |
-| 🤖 **Role 3: AI 파이프라인 (Chat)** | `app/api/v1/chat.py`, `app/services/gemini_service.py` | [📖 Chat 가이드](docs/roles/chat_api_guide.md) |
-| 👑 **감독 & 코드 리뷰 (Director)** | 아키텍처 검토, PR 리뷰, 브랜치 관리 및 통합 테스트 | [📖 ADR 의사결정록](docs/decision_log.md) |
+| 역할 (Role) | 브랜치 | 주요 담당 모듈 | 상세 가이드 문서 |
+| :--- | :--- | :--- | :--- |
+| 👑 **감독 & 인프라 (Director)** | `main` / `develop` | 아키텍처 검토, PR 리뷰, 브랜치 관리, AWS EC2 배포 | [📖 ADR 의사결정록](docs/decision_log.md) |
+| 🛡️ **Role 1: 인증 & 보안 (Auth)** | `dev/auth` | `app/api/v1/auth.py`, `app/core/security.py`, `app/models/user.py` | [📖 Auth 가이드](docs/roles/auth_guide.md) |
+| 💾 **Role 2: 데이터 & 로깅 (Log/DB)** <br>*(내 담당)* | `dev/log` | `app/api/v1/logs.py`, `app/core/database.py`, `app/models/chat.py` | [📖 Log/DB 가이드](docs/roles/log_db_guide.md) |
+| 🤖 **Role 3: AI 파이프라인 (Chat)** | `dev/chat` | `app/api/v1/chat.py`, `app/services/gemini_service.py` | [📖 Chat 가이드](docs/roles/chat_api_guide.md) |
 
 ---
 
@@ -68,19 +68,11 @@ chat-be/
 
 ## ⚡ 빠른 시작 (Getting Started)
 
-### 1. 가상환경 생성 및 패키지 설치
+### 1. 가상환경 생성 및 패키지 설치 (`uv`)
 ```bash
-# 가상환경 생성
-python -m venv .venv
-
-# 가상환경 활성화 (Windows PowerShell)
-.venv\Scripts\Activate.ps1
-
-# 가상환경 활성화 (Mac/Linux)
-# source .venv/bin/activate
-
-# 의존성 패키지 설치
-pip install -r requirements.txt
+# uv 기반 가상환경 생성 및 초고속 의존성 설치
+uv venv
+uv pip install -r requirements.txt
 ```
 
 ### 2. 환경변수 설정
@@ -111,9 +103,10 @@ GEMINI_MODEL_NAME=gemini-2.5-flash
 AI_TIMEOUT_SECONDS=10
 ```
 
-### 3. 서버 실행
+### 3. 서버 실행 (`uv run`)
 ```bash
-uvicorn app.main:app --reload --port 8000
+# 가상환경 수동 활성화 없이 바로 실행
+uv run uvicorn app.main:app --reload --port 8000
 ```
 - Swagger UI (API 문서): `http://localhost:8000/docs`
 - ReDoc: `http://localhost:8000/redoc`
@@ -123,14 +116,14 @@ uvicorn app.main:app --reload --port 8000
 ## 🧪 테스트 및 품질 검증
 
 ```bash
-# 전체 단위 테스트 실행
-pytest
+# 전체 단위 테스트 실행 (uv run)
+uv run pytest tests/ -v
 
-# 로그 적재 확인 스크립트
-python scripts/check_logs.py
+# 로그 적재 확인 스크립트 (uv run)
+uv run python scripts/check_logs.py
 
-# API 동작 일괄 테스트
-python scripts/test_api.py
+# API 동작 일괄 테스트 (uv run)
+uv run python scripts/test_api.py
 ```
 
 ---

@@ -39,12 +39,11 @@ def main():
     # 3. Create and switch to develop branch
     run_cmd("git checkout -b develop")
 
-    # 4. Create feature branches for team roles
+    # 4. Create branches for team roles
     branches = [
-        ("feature/auth-security", "Member A: JWT 인증 및 보안 모듈 구현"),
-        ("feature/gemini-pipeline", "Member B: Google Gemini SSE 스트리밍 및 타임아웃 래퍼 구현"),
-        ("feature/db-logging", "Member C: SQLite ORM 모델링 및 대화 로그 검증 스크립트 작성"),
-        ("feature/ui-frontend", "Member D: 반응형 멀티세션 채팅 UI 및 대화 로그 뷰어 템플릿 구현")
+        ("dev/auth", "Role 1: 인증 및 보안 모듈 (Bcrypt, JWT, 건설 도메인)"),
+        ("dev/log", "Role 2: 데이터 및 로깅 모듈 (SQLite ORM, 지연시간 적재, 4대 표준 로거)"),
+        ("dev/chat", "Role 3: AI 파이프라인 & SSE 스트리밍 모듈 (Gemma 4 26B, 타임아웃 방어)")
     ]
 
     for branch_name, desc in branches:

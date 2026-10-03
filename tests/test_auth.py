@@ -19,14 +19,17 @@ def test_register_and_login():
     # 1. Register
     reg_res = client.post("/api/v1/auth/register", json={
         "username": username,
+        "nickname": "테스트유저",
         "password": password
     })
     assert reg_res.status_code == 201
     assert reg_res.json()["username"] == username
+    assert reg_res.json()["nickname"] == "테스트유저"
 
     # 2. Duplicate Register should fail
     dup_res = client.post("/api/v1/auth/register", json={
         "username": username,
+        "nickname": "테스트유저",
         "password": password
     })
     assert dup_res.status_code == 400

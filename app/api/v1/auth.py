@@ -5,7 +5,7 @@ from app.core.database import get_db
 from app.core.config import get_settings
 from app.core.security import get_password_hash, verify_password, create_access_token
 from app.models.user import User
-from app.schemas.auth import UserCreate, UserLogin, UserResponse, Token
+from app.schemas.auth import UserCreate, UserLogin, UserResponse, Token, PasswordChange
 from app.api.deps import get_current_user
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
@@ -24,6 +24,7 @@ def register(user_in: UserCreate, db: Session = Depends(get_db)):
 
     new_user = User(
         username=user_in.username,
+        nickname=user_in.nickname,
         password_hash=get_password_hash(user_in.password),
         is_active=True,
         is_admin=False
@@ -85,3 +86,21 @@ def logout(response: Response):
 def get_me(current_user: User = Depends(get_current_user)):
     """Returns profile of currently authenticated user."""
     return current_user
+
+
+@router.put("/password")
+def change_password(
+    password_in: PasswordChange,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Changes the password of the currently authenticated user."""
+    if not verify_password(password_in.current_password, current_user.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="현재 비밀번호가 일치하지 않습니다."
+        )
+
+    current_user.password_hash = get_password_hash(password_in.new_password)
+    db.commit()
+    return {"message": "비밀번호가 변경되었습니다."}

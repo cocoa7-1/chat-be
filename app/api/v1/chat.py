@@ -1,5 +1,5 @@
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.responses import StreamingResponse
@@ -144,7 +144,7 @@ async def stream_chat(
     db.add(user_msg)
     
     # Update session updated_at
-    session.updated_at = datetime.utcnow()
+    session.updated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(user_msg)
 
