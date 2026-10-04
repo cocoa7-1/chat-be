@@ -1,15 +1,13 @@
 # Vercel + EC2 최소 배포
 
-목표는 테스트 사용자용 외부 URL입니다. Vercel은 정적 프론트, EC2 한 대는 FastAPI와 SQLite를 실행합니다. 아래는 준비·실행 방법이며 배포 완료 기록이 아닙니다. 배포 후 README에 URL과 BE/FE 커밋을 기입합니다.
+Vercel은 정적 프론트, EC2 한 대는 FastAPI와 SQLite를 실행합니다. 신규 설치와 코드 업데이트 절차를 구분합니다.
 
-현재 배포 URL·커밋·확인 근거는 [README](../README.md)에 기록했습니다. 기존 서버에는 설치 절차를 다시 실행하지 않습니다. 실제 AI로 전환할 때는 EC2의 `/home/ubuntu/apps/chat-be/.env`에서 `GEMINI_API_KEY`를 사용자 직접 입력 후 `sudo systemctl restart chat-be`로 반영합니다. JWT 키와 DB 경로는 유지하며 `.env`를 Git에 포함하지 않습니다. 서비스 healthy 응답과 실제 AI 호출 성공은 별도 확인합니다.
+서비스 주소와 주요 설정은 [README](../README.md)를 참고하세요. 기존 서비스 업데이트에서는 .env와 앱 외부의 SQLite 파일을 유지하고 검증한 커밋을 반영한 뒤 서비스를 재시작합니다.
 
 ## 1. 계정과 브랜치
 
-- AWS 플랜·크레딧 적용 범위를 한 번 확인합니다. Free plan과 크레딧 만료일은 서로 다릅니다. 유료 전환을 하지 않습니다. [AWS FAQ](https://aws.amazon.com/free/free-tier-faqs/).
+- AWS 플랜·크레딧 적용 범위를 한 번 확인합니다. Free plan과 크레딧 만료일은 서로 다릅니다. 배포 전 적용요금과 크레딧 조건을 확인합니다. [AWS FAQ](https://aws.amazon.com/free/free-tier-faqs/).
 - GitHub의 main/develop 중 어떤 브랜치든 배포할 수 있습니다. 팀의 기본 기준은 검증된 main입니다.
-- PR #8은 2026-10-04 확인 시 develop → main, open/미병합입니다. 승인만으로 main 코드가 바뀌지 않습니다. 병합 뒤 fetch하여 main에 필요한 코드가 있는지 확인합니다.
-- FE도 별도 레포이므로 BE PR 병합으로 FE 브랜치가 바뀌지 않습니다. nickname 가입 수정은 FE dev/log-frontend-integration에 있으므로 배포 브랜치에 해당 변경을 반영합니다.
 - 두 레포는 공개된 GitHub 조직 레포입니다. 조직 비공개 레포에 대한 Hobby 제한은 해당하지 않습니다. Vercel 계정은 GitHub로 가입하고 Hobby를 사용하며 연결 권한은 해당 프론트 레포로 제한합니다. [Vercel Git 설명](https://vercel.com/docs/git).
 
 AWS IAM 사용자는 같은 AWS 계정 안의 작업용 신원이며 별도 요금 계정이 아닙니다. EC2 생성에 기술적으로 새 IAM 사용자가 필수인 것은 아니지만 AWS는 root를 일상 작업에 사용하지 않도록 권장합니다. 이번처럼 반복해서 서버를 관리하거나 브라우저 에이전트에 맡긴다면 작업용 로그인 하나를 분리하고 EC2 작업 권한을 부여하는 방법을 권장합니다. CLI 액세스 키·별도 AWS 계정·Organizations를 만들 필요는 없습니다. [AWS root 권장사항](https://docs.aws.amazon.com/IAM/latest/UserGuide/root-user-best-practices.html).
@@ -29,7 +27,7 @@ AWS IAM 사용자는 같은 AWS 계정 안의 작업용 신원이며 별도 요�
 | 보안 그룹 | 80/443 외부 허용, SSH 22는 접속 소스로 제한, 8000 외부 비허용 |
 | 키 페어 | 개인 PC에 안전하게 보관, Git에 추가하지 않음 |
 
-RDS·ALB·NAT Gateway·Elastic IP·추가 디스크·상세 모니터링은 추가하지 않습니다. EC2/디스크/IP는 접속자가 없어도 사용량이 생기며 적용 크레딧을 소비합니다.
+이 구성에는 별도DB서버나 로드밸런서가 필요하지 않습니다. EC2/디스크/IP는 접속자가 없어도 사용량이 생기며 적용 크레딧을 소비합니다.
 
 EC2 콘솔의 Connect로 접속하거나 개인 PC에서 `ssh -i <키파일> ubuntu@<퍼블릭IP>`로 접속합니다. 콘솔 Instance Connect는 내 PC My IP 규칙과 별개로 해당 리전의 Instance Connect 소스가 허용되어야 합니다. [연결 조건](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ec2-instance-connect-methods.html).
 
@@ -63,7 +61,9 @@ ALGORITHM=HS256
 DATABASE_URL=sqlite:////home/ubuntu/chat-data/chatbot.db
 GEMINI_API_KEY=
 GEMINI_MODEL_NAME=gemma-4-26b-a4b-it
-AI_TIMEOUT_SECONDS=30
+AI_TIMEOUT_SECONDS=60
+AI_SEARCH_TIMEOUT_SECONDS=90
+GEMINI_SEARCH_ENABLED=True
 MAX_HISTORY_MESSAGES=10
 ```
 

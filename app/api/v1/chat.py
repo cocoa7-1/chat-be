@@ -175,6 +175,9 @@ async def stream_chat(
     selected_model = payload.model or gemini_service.model_name
     if payload.thinking_level and payload.thinking_level not in THINKING_LEVELS.get(selected_model, []):
         raise HTTPException(status_code=422, detail="선택한 모델이 지원하지 않는 추론 수준입니다.")
+    retry_seconds = gemini_service.cooldown_seconds(selected_model)
+    if retry_seconds:
+        raise HTTPException(status_code=429, detail="이 모델은 사용량 제한으로 잠시 대기 중입니다. 다른 모델을 선택하거나 대기 후 다시 시도해 주세요.", headers={"Retry-After": str(retry_seconds)})
     admit_chat(request, user_id)
     log_request_received(user_id=user_id, path="/api/v1/chat/stream", request_id=request_id)
 
@@ -219,7 +222,7 @@ async def stream_chat(
         ).all()
         # 목록 안의 for는 여러 행을 한 번에 새 목록으로 바꾸는 문법입니다. ORM 객체 대신 역할/본문만 미리
         # 복사해 AI에 전달합니다.
-        history_context = [{"role": m.role, "content": m.content} for m in past_messages]
+        history_context = [{"role": m.role, "content": m.content, "status": m.status} for m in past_messages]
         # 트랜잭션(함께 성공/실패해야 할 저장 묶음)을 확정합니다. 첫 채팅에서는 세션과 질문을 같이 저장한 뒤
         # AI를 호출합니다.
         db.commit()
@@ -255,6 +258,7 @@ async def stream_chat(
         full_assistant_reply = ""
         latency_ms = 0
         error_type = None
+        search_info, search_suggestions = None, ""
 
         try:
             # 대화 연결용 meta 사건을 먼저 보냅니다.
@@ -289,6 +293,8 @@ async def stream_chat(
                     full_assistant_reply = chunk.get("full_text", "")
                     latency_ms = chunk.get("latency_ms", 0)
                     error_type = chunk.get("error")
+                    search_info = chunk.get("search")
+                    search_suggestions = chunk.get("search_suggestions", "")
 
             # 5. AI 전체 답변과 상태·시간을 DB에 저장합니다.
             msg_status = "error" if error_type else "success"
@@ -317,7 +323,9 @@ async def stream_chat(
                 "message_id": assistant_msg.id,
                 "latency_ms": latency_ms,
                 "status": msg_status,
-                "error": error_type
+                "error": error_type,
+                "search": search_info,
+                "search_suggestions": search_suggestions
             }
             # SSE는 문자열 사건을 빈 줄 두 개로 구분합니다. ensure_ascii=False는 한글을 읽기
             # 쉬운 형태로 보내며 JSON 형식은 유지합니다.

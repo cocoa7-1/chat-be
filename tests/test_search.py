@@ -58,6 +58,10 @@ async def test_stream_sends_search_choice_to_sdk(monkeypatch, enabled, sdk_confi
     assert len(requests) == 1
     assert requests[0]['model'] == service.model_name
     config = requests[0]['config']
+    # 검색을 켠 요청은 도구 사용을 명시적으로 요구하고 현재 날짜를 제공합니다.
+    instruction = config.system_instruction if sdk_config else config['system_instruction']
+    assert '오늘 날짜(한국)' in instruction
+    assert ('Google Search 도구로 관련 자료' in instruction) is enabled
     if sdk_config:
         assert isinstance(config, types.GenerateContentConfig)
         assert bool(config.tools) is enabled

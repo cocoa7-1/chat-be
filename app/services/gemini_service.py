@@ -1,13 +1,16 @@
 # Google AI SDK(외부 API를 편하게 부르는 도구)를 감싸 질문·과거 문맥·검색 옵션을 보내고 답변을 조금씩
 # 받습니다.
 # 웹 검색 도구를 넣으면 모델이 필요할 때 검색할 수 있습니다. 옵션을 켠 것과 실제 검색 성공은 서로 다른 상태입니다.
-# 전체 제한시간은 연결과 모든 조각 읽기에 함께 적용합니다. 키가 없거나 SDK 초기화가 실패하면 기존 Demo 경로가
-# 실행됩니다.
+# 전체 제한시간은 연결과 모든 조각 읽기에 함께 적용합니다. 키가 없으면 Demo, 초기화 실패는 오류로 처리합니다.
 import asyncio
 import time
 import json
+from datetime import datetime, timezone, timedelta
 from typing import AsyncGenerator, List, Dict, Any, Optional
 from app.core.config import get_settings
+from app.core.ai_models import DEFAULT_THINKING
+from app.services.ai_errors import classify_ai_error, error_message, EmptyResponseError
+from app.services.grounding import collect_grounding, sources_markdown
 from app.core.logging import (
     log_ai_call_start,
     log_ai_call_success,
@@ -24,9 +27,7 @@ class GeminiService:
     """
 
     def __init__(self):
-        """설정을 복사하고 키가 있으면 SDK를 준비합니다. 현재 초기화 실패는 조용히 Demo로 전환되는 기존
-        동작이므로 실제 AI 성공으로 단정하면 안 됩니다.
-        """
+        """설정을 복사하고 키가 있으면 SDK를 준비합니다. SDK 재시도는 앱의 전체 시간제한 안에서 관리합니다."""
         self.api_key = settings.GEMINI_API_KEY
         self.model_name = settings.GEMINI_MODEL_NAME
         self.search_enabled = settings.GEMINI_SEARCH_ENABLED
@@ -34,16 +35,23 @@ class GeminiService:
         self.search_timeout_seconds = settings.AI_SEARCH_TIMEOUT_SECONDS
         self.system_instruction = settings.SYSTEM_INSTRUCTION
         self._client = None
+        self._cooldowns = {}
 
         if self.api_key:
             try:
                 from google import genai
                 from google.genai import types
-                self._client = genai.Client(api_key=self.api_key)
+                # 한 요청을 SDK가 여러 번 재시도해 한도를 더 소모하거나 대기시간을 늘리지 않게 합니다.
+                self._client = genai.Client(api_key=self.api_key, http_options=types.HttpOptions(
+                    retry_options=types.HttpRetryOptions(attempts=1)
+                ))
                 self._types = types
-            except Exception as e:
-                # SDK 초기화 실패는 기존 동작대로 Demo로 전환됩니다. 실제 AI 성공으로 오인하지 않도록 구분할 후속이 남아 있습니다.
+            except Exception:
                 self._client = None
+
+    def cooldown_seconds(self, model_name):
+        """공급자가 거절한 모델의 짧은 대기시간을 반환합니다. 다른 모델의 요청은 막지 않습니다."""
+        return max(0, int(self._cooldowns.get(model_name, 0) - time.monotonic() + 0.999))
 
     def is_live_api(self) -> bool:
         """AI 키와 SDK 클라이언트가 준비됐는지 확인합니다. True라도 검색 권한·실제 API 호출 성공까지
@@ -62,6 +70,8 @@ class GeminiService:
         # 크기를 제한합니다.
         recent_history = history[-settings.MAX_HISTORY_MESSAGES:] if history else []
         for msg in recent_history:
+            if msg.get("status", "success") != "success":
+                continue
             role = "user" if msg["role"] == "user" else "model"
             contents.append({
                 "role": role,
@@ -73,7 +83,17 @@ class GeminiService:
             "role": "user",
             "parts": [{"text": current_question}]
         })
-        return contents
+        # 실패한 답변을 제외하면 같은 역할이 연속할 수 있어 하나로 합칩니다.
+        merged = []
+        for item in contents:
+            if merged and merged[-1]["role"] == item["role"]:
+                merged[-1]["parts"].extend(item["parts"])
+            else:
+                merged.append(item)
+        # 최근 기록을 자를 때 모델 답변이 첫 행이 된 경우, 질문으로 시작하도록 정리합니다.
+        while merged and merged[0]["role"] == "model":
+            merged.pop(0)
+        return merged
 
     async def stream_chat_response(
         self,
@@ -102,6 +122,15 @@ class GeminiService:
         log_ai_call_start(user_id=user_id, request_id=request_id, model=selected_model)
         
         full_response = ""
+        sources, queries, search_suggestions = {}, set(), ""
+        blocked = False
+
+        if self.api_key and not self._client:
+            friendly = error_message("AI_INIT_ERROR", "initialization")
+            log_ai_call_failed(request_id, "AI_INIT_ERROR", 0)
+            yield {"text": friendly, "done": False, "error": None}
+            yield {"text": "", "done": True, "full_text": friendly, "latency_ms": 0, "error": "AI_INIT_ERROR"}
+            return
 
         # 1. 키와 SDK가 준비된 실제 AI 호출 경로입니다.
         if self.is_live_api():
@@ -112,15 +141,20 @@ class GeminiService:
                 # AI 요청 설정을 사전(dict)에 모읍니다. SDK가 있으면 **config_options로
                 # 이름별 인수를 펼쳐 설정 객체를 만듭니다.
                 config_options = {
-                    "system_instruction": self.system_instruction,
+                    "system_instruction": self.system_instruction + "\n오늘 날짜(한국): " + datetime.now(timezone(timedelta(hours=9))).date().isoformat(),
                     "temperature": temperature if temperature is not None else (1.0 if selected_model.startswith("gemini-3") else 0.7),
                 }
                 # 검색 도구를 제공하지만 검색을 매번 강제하지는 않습니다. 실제 검색 지원/무료 할당량은 별도로
                 # 확인해야 합니다.
-                if thinking_level is not None:
-                    config_options["thinking_config"] = {"thinking_level": thinking_level}
+                effective_thinking = thinking_level or DEFAULT_THINKING.get(selected_model)
+                if effective_thinking:
+                    config_options["thinking_config"] = {"thinking_level": effective_thinking}
                 if use_search:
                     config_options["tools"] = [{"google_search": {}}]
+                    config_options["system_instruction"] += (
+                        "\n사용자가 웹 검색을 켰습니다. 답변 전에 Google Search 도구로 관련 자료를 찾아 확인하세요. "
+                        "기억만으로 최신 정보를 확인했다고 말하지 말고, 검색이 실행되지 않으면 그 한계를 밝혀 주세요."
+                    )
                 if hasattr(self, "_types") and self._types:
                     config = self._types.GenerateContentConfig(**config_options)
                 else:
@@ -158,6 +192,10 @@ class GeminiService:
                             chunk = await asyncio.wait_for(anext(iterator), timeout=remaining)
                         except StopAsyncIteration:
                             break
+                        search_suggestions = collect_grounding(chunk, sources, queries) or search_suggestions
+                        for candidate in getattr(chunk, "candidates", None) or []:
+                            reason = str(getattr(candidate, "finish_reason", ""))
+                            blocked = blocked or any(kind in reason for kind in ("SAFETY", "RECITATION", "BLOCKLIST", "PROHIBITED_CONTENT"))
                         if chunk.text:
                             full_response += chunk.text
                             # 이 자료를 호출한 API에 전달하고 잠시 멈춥니다. 호출자가 다음 조각을
@@ -184,6 +222,12 @@ class GeminiService:
                                 request_id, type(close_error).__name__
                             )
 
+                if not full_response.strip():
+                    raise EmptyResponseError(blocked)
+                footer = sources_markdown(sources)
+                if footer:
+                    full_response += footer
+                    yield {"text": footer, "done": False, "error": None}
                 latency_ms = int((time.perf_counter() - start_time) * 1000)
                 log_ai_call_success(request_id=request_id, latency_ms=latency_ms)
 
@@ -194,7 +238,9 @@ class GeminiService:
                     "done": True,
                     "full_text": full_response,
                     "latency_ms": latency_ms,
-                    "error": None
+                    "error": None,
+                    "search": {"requested": use_search, "executed": bool(queries or sources), "source_count": len(sources)},
+                    "search_suggestions": search_suggestions
                 }
                 return
 
@@ -225,17 +271,13 @@ class GeminiService:
             except Exception as e:
                 latency_ms = int((time.perf_counter() - start_time) * 1000)
                 # SDK 예외 원문에는 요청값 등이 섞일 수 있어 고정 오류 코드만 밖으로 내보냅니다.
-                err_str = str(e)
-                error_code = "AI_RATE_LIMIT" if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str else "AI_SERVICE_ERROR"
+                error_code, reason, provider_code, retry_seconds = classify_ai_error(e)
+                if error_code == "AI_RATE_LIMIT":
+                    self._cooldowns[selected_model] = time.monotonic() + retry_seconds
                 log_ai_call_failed(request_id=request_id, error=error_code, latency_ms=latency_ms)
-                if "404" in err_str or "not found" in err_str.lower():
-                    friendly_err = (
-                        "\n\n⚠️ **선택한 AI 모델을 사용할 수 없습니다. 다른 모델을 선택해 주세요.**"
-                    )
-                elif error_code == "AI_RATE_LIMIT":
-                    friendly_err = "\n\n⚠️ **선택한 모델의 사용량 한도에 도달했어요. 잠시 기다리거나 다른 모델을 선택해 주세요. (error: AI_RATE_LIMIT)**"
-                else:
-                    friendly_err = "\n\n⚠️ **AI 서비스 오류가 발생했습니다. 잠시 후 다시 시도해 주세요. (error: AI_SERVICE_ERROR)**"
+                logger.warning("ai_diagnostic request_id=%s model=%s search=%s thinking=%s provider_code=%s reason=%s retry_seconds=%s",
+                               request_id, selected_model, use_search, thinking_level or DEFAULT_THINKING.get(selected_model), provider_code, reason, retry_seconds)
+                friendly_err = "\n\n⚠️ " + error_message(error_code, reason, retry_seconds)
                 
                 full_response += friendly_err
                 # 이 자료를 호출한 API에 전달하고 잠시 멈춥니다. 호출자가 다음 조각을 요청하면 여기 뒤부터
