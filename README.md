@@ -56,8 +56,13 @@ Windows PowerShell의 파일 복사는 `Copy-Item .env.example .env`를 사용�
 | `AI_TIMEOUT_SECONDS` | 연결 시작부터 응답 스트림 완료까지 공유하는 전체 제한, 기본 `30`초. SDK 스트림 정리는 별도로 최대 1초 |
 | `MAX_HISTORY_MESSAGES` | 실제 AI에 전달할 최근 메시지 수, `10`개 (질문·답변 각각 한 메시지) |
 | `SYSTEM_INSTRUCTION` | 선택: 건설 도메인 시스템 지시문 재정의. 생략 시 코드 기본값 사용 |
+| `REGISTER_REQUESTS_PER_MINUTE` | IP당 최근60초 가입 요청, 기본5회 |
+| `LOGIN_REQUESTS_PER_MINUTE` | IP당 최근60초 로그인·비밀번호 변경 요청 합산, 기본10회 |
+| `CHAT_REQUESTS_PER_MINUTE` | 사용자당 최근60초 채팅 요청, 기본6회 |
+| `CHAT_GLOBAL_REQUESTS_PER_MINUTE` | 프로세스 전체 최근60초 채팅 요청, 기본20회 |
+| `CHAT_USER_CONCURRENCY`, `CHAT_GLOBAL_CONCURRENCY` | 진행 중 채팅 사용자당1개·전체3개 |
 
-키 생성 예시: `uv run python -c 'import secrets; print(secrets.token_hex(32))'`. 생성한 값은 `.env`의 `SECRET_KEY`에만 넣습니다. `.env`, DB, 로그는 `.gitignore`에 포함됩니다. AI 키·JWT 키·로그인 토큰을 프론트 JS나 Git에 넣지 않습니다.
+JWT 키는 사용자가 직접 생성한 충분한 랜덤값을 `.env`의 `SECRET_KEY`에만 넣습니다. `APP_ENV=production/prod`에서는 공개 개발 기본값·빈 값·32바이트 미만의 키로 서버를 시작할 수 없습니다. 기존 키를 자동 교체하지 않습니다. `.env`, DB, 로그는 `.gitignore`에 포함됩니다. AI 키·JWT 키·로그인 토큰 원문을 대화·로그·프론트 JS·Git에 넣지 않습니다.
 
 ```bash
 uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
@@ -141,6 +146,16 @@ data: {"done":true,"message_id":2,"latency_ms":1200,"status":"success","error":n
 ```
 
 세션·사용자 질문은 AI 호출 전에 저장을 완료합니다. AI 오류나 타임아웃은 이미 저장한 질문을 되돌리지 않습니다. AI 답변 또는 오류 안내는 이후 별도 저장 단계이며, 답변 저장 자체가 실패해도 앞서 저장한 질문은 남습니다. 초기 DB 저장 자체가 실패한 질문은 저장된 것으로 처리하지 않고 위 오류 안내를 반환합니다.
+
+### 요청 남용 제한과 운영 점검
+
+가입·로그인 실패도 IP별 횟수에 포함합니다. 채팅은 사용자별·전체 최근60초 횟수 및 동시 요청 수를 함께 검사하며 초과하면 HTTP429, 고정 안내 JSON, `Retry-After` 헤더와 `request_rejected` 이벤트를 반환합니다. 거절된 채팅은 질문 저장·AI 호출을 하지 않습니다. 동시 슬롯은 DB 처리부터 SSE 전송 종료까지 유지하고 정상 종료·실패·클라이언트 취소 시 해제합니다. 이미 저장된 질문을 제한 때문에 삭제하지 않습니다.
+
+기존 `--workers 1` 배포에 맞춘 메모리 제한입니다. 프로세스 재시작 때 횟수가 초기화되며 여러 프로세스/인스턴스 사이에 공유되지 않습니다. 오래된 집계는 만료시키고 집계 키를 최대10,000개로 제한합니다. 제한은 사용량 남용을 줄이는 장치이며 AWS·Google의 청구 한도는 아닙니다. 현재 FE는429를 일반 요청 오류로 표시합니다.
+
+IP는 ASGI client 주소를 사용하며 앱에서 사용자가 보낸 `X-Forwarded-For`를 직접 신뢰하지 않습니다. 운영에서는8000을 외부에 열지 않고 Uvicorn이 loopback Caddy만 신뢰하는지 확인해야 합니다. CORS 제한만으로 직접 자동화 요청이 막히지는 않습니다.
+
+Aside가 기존 서비스 PID를 확인한 뒤 같은 Python 환경에서 `scripts/check_security_config.py --pid <PID>`를 실행하면 현재 프로세스 환경과 작업 폴더의 설정을 기준으로 JWT 설정 여부·개발 기본값과 다른지·최소 길이·production 여부를 boolean으로만 출력합니다. 키 원문·해시·환경변수 전체를 출력하거나 DB/AI를 초기화하지 않습니다. `baseline_passed`는 최소 조건 확인이며 키의 실제 랜덤성·서버 전체 보안 안전성을 증명하지 않습니다. SSH·IAM·IMDSv2와 운영 설정은 별도 확인입니다. 운영 확인 결과는 아직 미수신입니다.
 
 ### 사용자 기준 로그 조회
 

@@ -6,24 +6,15 @@ from unittest.mock import Mock
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, event, func, select
+from sqlalchemy import event, func, select
 from sqlalchemy.exc import OperationalError
-from sqlalchemy.orm import sessionmaker
 
 from app.api.v1 import chat
-from app.core.database import Base, get_db
-from app.core.logging import logger
+from app.core import abuse
+from app.core.database import get_db
 from app.main import app
 from app.models.chat import ChatMessage, ChatSession
 from app.services import gemini_service as gm
-
-
-@pytest.fixture(autouse=True)
-def capture_server_logs(caplog):
-    # The application logger does not propagate to pytest's root handler.
-    logger.addHandler(caplog.handler)
-    yield
-    logger.removeHandler(caplog.handler)
 
 
 class FakeStream:
@@ -148,33 +139,6 @@ async def test_slow_cleanup_is_bounded_and_keeps_timeout_result(monkeypatch, cap
     assert "ai_stream_close_failed" in caplog.text
 
 
-@pytest.fixture
-def isolated_chat(tmp_path, monkeypatch):
-    engine = create_engine(
-        "sqlite:///" + (tmp_path / "chat.db").as_posix(),
-        connect_args={"check_same_thread": False}
-    )
-    Base.metadata.create_all(engine)
-    factory = sessionmaker(bind=engine, autoflush=False)
-
-    def db_dependency():
-        with factory() as db:
-            yield db
-
-    app.dependency_overrides[get_db] = db_dependency
-    monkeypatch.setattr(chat, "SessionLocal", factory)
-    with TestClient(app, raise_server_exceptions=False) as client:
-        assert client.post("/api/v1/auth/register", json={
-            "username": "reliability_user", "nickname": "Audit", "password": "auditPassword123"
-        }).status_code == 201
-        assert client.post("/api/v1/auth/login", json={
-            "username": "reliability_user", "password": "auditPassword123"
-        }).status_code == 200
-        yield client, factory, engine
-    app.dependency_overrides.pop(get_db, None)
-    engine.dispose()
-
-
 @pytest.mark.parametrize("failure,existing_session,endpoint", [
     ("session_insert", False, "/api/v1/chat/stream"),
     ("question_insert", False, "/api/v1/chat/stream"),
@@ -223,6 +187,7 @@ def test_initial_db_failure_rolls_back_and_returns_json(
         assert response.json() == {"detail": chat.DB_SAVE_ERROR_DETAIL}
         assert response.headers["X-Request-ID"] == "db-failure-test"
         assert rollback.called and not ai.called
+        assert abuse.guard.active_total == 0
         assert "db_save_failed" in caplog.text and "request_id=db-failure-test" in caplog.text
         assert "db_save_success" not in caplog.text
         assert "private SQL" not in caplog.text and "private question" not in caplog.text
@@ -273,6 +238,7 @@ def test_sse_result_and_save_events_survive_transaction_changes(
     assert any("entity=user_message" in entry for entry in events)
     assert any("entity=assistant_message" in entry for entry in events)
     assert stream.closed
+    assert abuse.guard.active_total == 0
 
 
 def test_explicit_session_success_event(isolated_chat, caplog):

@@ -14,6 +14,7 @@ from app.core.config import get_settings
 from app.core.database import init_db
 from app.core.logging import logger
 from app.core.middlewares import RequestIDMiddleware
+from app.core.abuse import ChatLeaseMiddleware
 
 # Routers
 from app.api.v1.auth import router as auth_router
@@ -46,12 +47,14 @@ app = FastAPI(
 
 # 1. Custom Middlewares
 app.add_middleware(RequestIDMiddleware)
+app.add_middleware(ChatLeaseMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["Retry-After", "X-Request-ID"],
 )
 
 # 2. Register Exception Handlers

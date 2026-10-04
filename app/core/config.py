@@ -1,7 +1,10 @@
 import os
 from functools import lru_cache
 from typing import Optional
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+DEVELOPMENT_SECRET_KEY = "feelosophysics-chatbot-super-secret-key-change-in-production"
 
 
 class Settings(BaseSettings):
@@ -12,7 +15,7 @@ class Settings(BaseSettings):
     HOST: str = "0.0.0.0"
 
     # Security & Auth
-    SECRET_KEY: str = "feelosophysics-chatbot-super-secret-key-change-in-production"
+    SECRET_KEY: str = DEVELOPMENT_SECRET_KEY
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24  # 1 day
     COOKIE_NAME: str = "access_token"
@@ -25,6 +28,14 @@ class Settings(BaseSettings):
     GEMINI_MODEL_NAME: str = "gemma-4-26b-a4b-it"  # AI Studio의 Gemma 4 26B 정식 식별자
     AI_TIMEOUT_SECONDS: int = 30
     MAX_HISTORY_MESSAGES: int = 10
+
+    # Per-process safeguards for the existing single-worker deployment.
+    REGISTER_REQUESTS_PER_MINUTE: int = Field(5, ge=1)
+    LOGIN_REQUESTS_PER_MINUTE: int = Field(10, ge=1)
+    CHAT_REQUESTS_PER_MINUTE: int = Field(6, ge=1)
+    CHAT_GLOBAL_REQUESTS_PER_MINUTE: int = Field(20, ge=1)
+    CHAT_USER_CONCURRENCY: int = Field(1, ge=1)
+    CHAT_GLOBAL_CONCURRENCY: int = Field(3, ge=1)
 
     # System Persona
     SYSTEM_INSTRUCTION: str = (
@@ -45,7 +56,16 @@ class Settings(BaseSettings):
         extra="ignore"
     )
 
+    def validate_production_security(self) -> None:
+        if self.APP_ENV.strip().lower() in {"production", "prod"}:
+            if self.SECRET_KEY.strip() == DEVELOPMENT_SECRET_KEY or len(self.SECRET_KEY.strip().encode("utf-8")) < 32:
+                # A model-validator error can print the whole settings input,
+                # including secrets. Raise a fixed message outside validation.
+                raise RuntimeError("Production SECRET_KEY must be a unique random key of at least 32 bytes.")
+
 
 @lru_cache()
 def get_settings() -> Settings:
-    return Settings()
+    settings = Settings()
+    settings.validate_production_security()
+    return settings

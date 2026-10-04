@@ -7,12 +7,14 @@ from app.core.security import get_password_hash, verify_password, create_access_
 from app.models.user import User
 from app.schemas.auth import UserCreate, UserLogin, UserResponse, Token, PasswordChange
 from app.api.deps import get_current_user
+from app.core.abuse import limit_registration, limit_login
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 settings = get_settings()
 
 
-@router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED,
+             dependencies=[Depends(limit_registration)])
 def register(user_in: UserCreate, db: Session = Depends(get_db)):
     """Registers a new user account."""
     existing_user = db.scalar(select(User).where(User.username == user_in.username))
@@ -35,7 +37,7 @@ def register(user_in: UserCreate, db: Session = Depends(get_db)):
     return new_user
 
 
-@router.post("/login", response_model=Token)
+@router.post("/login", response_model=Token, dependencies=[Depends(limit_login)])
 def login(response: Response, user_in: UserLogin, db: Session = Depends(get_db)):
     """Authenticates user and sets HTTP-Only cookie with JWT."""
     user = db.scalar(select(User).where(User.username == user_in.username))
@@ -88,7 +90,7 @@ def get_me(current_user: User = Depends(get_current_user)):
     return current_user
 
 
-@router.put("/password")
+@router.put("/password", dependencies=[Depends(limit_login)])
 def change_password(
     password_in: PasswordChange,
     current_user: User = Depends(get_current_user),

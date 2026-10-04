@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import select, desc
 from sqlalchemy.exc import SQLAlchemyError
 from app.core.database import get_db, SessionLocal
+from app.core.abuse import admit_chat
 from app.core.logging import (
     log_request_received,
     log_db_save_success,
@@ -133,6 +134,7 @@ async def stream_chat(
     """
     request_id = getattr(request.state, "request_id", "req-unknown")
     user_id = current_user.id
+    admit_chat(request, user_id)
     log_request_received(user_id=user_id, path="/api/v1/chat/stream", request_id=request_id)
 
     # 1. Prepare session, question and context in one transaction. A failed
