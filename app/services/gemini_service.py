@@ -1,3 +1,8 @@
+# Google AI SDK(외부 API를 편하게 부르는 도구)를 감싸 질문·과거 문맥·검색 옵션을 보내고 답변을 조금씩
+# 받습니다.
+# 웹 검색 도구를 넣으면 모델이 필요할 때 검색할 수 있습니다. 옵션을 켠 것과 실제 검색 성공은 서로 다른 상태입니다.
+# 전체 제한시간은 연결과 모든 조각 읽기에 함께 적용합니다. 키가 없거나 SDK 초기화가 실패하면 기존 Demo 경로가
+# 실행됩니다.
 import asyncio
 import time
 import json
@@ -14,11 +19,17 @@ settings = get_settings()
 
 
 class GeminiService:
-    """Service wrapper for Google Gemini API with Timeout, Context, and Mock Fallback."""
+    """AI 설정과 클라이언트를 묶고 공통 호출 흐름을 제공합니다. 실제 호출과 Demo 호출이 아래에서 서로 다른 경로로
+    실행됩니다.
+    """
 
     def __init__(self):
+        """설정을 복사하고 키가 있으면 SDK를 준비합니다. 현재 초기화 실패는 조용히 Demo로 전환되는 기존
+        동작이므로 실제 AI 성공으로 단정하면 안 됩니다.
+        """
         self.api_key = settings.GEMINI_API_KEY
         self.model_name = settings.GEMINI_MODEL_NAME
+        self.search_enabled = settings.GEMINI_SEARCH_ENABLED
         self.timeout_seconds = settings.AI_TIMEOUT_SECONDS
         self.system_instruction = settings.SYSTEM_INSTRUCTION
         self._client = None
@@ -30,18 +41,24 @@ class GeminiService:
                 self._client = genai.Client(api_key=self.api_key)
                 self._types = types
             except Exception as e:
-                # If library not yet installed or key issue, fallback gracefully
+                # SDK 초기화 실패는 기존 동작대로 Demo로 전환됩니다. 실제 AI 성공으로 오인하지 않도록 구분할 후속이 남아 있습니다.
                 self._client = None
 
     def is_live_api(self) -> bool:
-        """Returns True if live Gemini API is configured and available."""
+        """AI 키와 SDK 클라이언트가 준비됐는지 확인합니다. True라도 검색 권한·실제 API 호출 성공까지
+        확인한 것은 아닙니다.
+        """
         return bool(self._client and self.api_key)
 
     def _build_context_messages(self, history: List[Dict[str, str]], current_question: str) -> List[Any]:
-        """Formats conversation history into Gemini SDK content objects or dicts."""
+        """최근 메시지를 user/model 역할로 바꾸고 마지막에 새 질문을 붙입니다. AI는 이 목록을 보고 같은
+        대화의 앞 내용을 참고합니다.
+        """
         contents = []
         
-        # Take the most recent N messages
+        # 최근 메시지만 골라 이번 질문의 문맥으로 보냅니다.
+        # [-N:]은 목록의 뒤에서 최대 N개를 자르는 문법입니다. 과거 메시지가 너무 많아도 이번 요청의 문맥
+        # 크기를 제한합니다.
         recent_history = history[-settings.MAX_HISTORY_MESSAGES:] if history else []
         for msg in recent_history:
             role = "user" if msg["role"] == "user" else "model"
@@ -50,7 +67,7 @@ class GeminiService:
                 "parts": [{"text": msg["content"]}]
             })
             
-        # Append current user prompt
+        # 과거 문맥 뒤에 이번 질문을 추가합니다.
         contents.append({
             "role": "user",
             "parts": [{"text": current_question}]
@@ -64,37 +81,51 @@ class GeminiService:
         history: List[Dict[str, str]],
         current_question: str
     ) -> AsyncGenerator[Dict[str, Any], None]:
-        """
-        Streams AI response token-by-token using SSE format with timeout protection.
-        Yields dicts with {"text": str, "done": bool, "latency_ms": int, "error": str, "full_text": str}.
+        """질문과 과거 문맥을 보내고 AI 답변을 한 조각씩 전달합니다.
+
+        async def와 yield를 함께 쓰면 비동기 생성기가 됩니다. 호출하는 쪽은 async for로 조각이
+        도착할 때마다 처리합니다. 기다리는 동안 다른 요청도 진행할 수 있습니다.
+
+        일반 조각은 text와 done=False를 담습니다. 마지막에는 done=True와 전체 답변·시간·오류를
+        보내 API가 저장할 내용을 확정하게 합니다. 연결과 모든 조각 읽기는 같은 제한시간을 공유합니다.
         """
         start_time = time.perf_counter()
         log_ai_call_start(user_id=user_id, request_id=request_id, model=self.model_name)
         
         full_response = ""
 
-        # Case 1: Live Gemini API
+        # 1. 키와 SDK가 준비된 실제 AI 호출 경로입니다.
         if self.is_live_api():
             try:
                 contents = self._build_context_messages(history, current_question)
+                # 도구를 제공하면 모델이 필요할 때 웹 검색을 사용할 수 있습니다.
+                # 검색이 거절되더라도 자동으로 모델을 바꾸거나 검색 없는 요청을 재시도하지 않습니다.
+                # AI 요청 설정을 사전(dict)에 모읍니다. SDK가 있으면 **config_options로
+                # 이름별 인수를 펼쳐 설정 객체를 만듭니다.
+                config_options = {
+                    "system_instruction": self.system_instruction,
+                    "temperature": 0.7,
+                }
+                # 검색 도구를 제공하지만 검색을 매번 강제하지는 않습니다. 실제 검색 지원/무료 할당량은 별도로
+                # 확인해야 합니다.
+                if self.search_enabled:
+                    config_options["tools"] = [{"google_search": {}}]
                 if hasattr(self, "_types") and self._types:
-                    config = self._types.GenerateContentConfig(
-                        system_instruction=self.system_instruction,
-                        temperature=0.7
-                    )
+                    config = self._types.GenerateContentConfig(**config_options)
                 else:
-                    config = {
-                        "system_instruction": self.system_instruction,
-                        "temperature": 0.7,
-                    }
+                    config = config_options
 
-                # One deadline covers connection and every read, even if tokens
-                # keep arriving. Do not keep a timeout context open across yield:
-                # that would also cancel the caller while it handles SSE data.
+                # 연결과 모든 읽기에 한 종료 시각을 사용합니다. 조각이 계속 와도 전체 제한은 늘어나지 않습니다.
+                # yield를 가로지르는 전체 취소 구역은 사용하지 않습니다.
+                # 그렇게 하면 API가 받은 조각을 전송하는 동안 호출자까지 뜻밖에 취소될 수 있기 때문입니다.
                 loop = asyncio.get_running_loop()
+                # 종료 시각을 한 번만 계산합니다. 조각마다 새로 30초를 주면 답변이 조금씩 올 때 전체
+                # 제한이 계속 늘어납니다.
                 deadline = loop.time() + self.timeout_seconds
                 response_stream = None
                 try:
+                    # await는 기다리는 동안 다른 작업에 실행 기회를 줍니다. wait_for는 지정
+                    # 시간이 지나면 기다리는 작업을 취소합니다.
                     response_stream = await asyncio.wait_for(
                         self._client.aio.models.generate_content_stream(
                             model=self.model_name,
@@ -103,8 +134,12 @@ class GeminiService:
                         ),
                         timeout=self.timeout_seconds
                     )
+                    # 비동기 반복자를 얻습니다. anext는 다음 조각을 요청하며 더 없으면
+                    # StopAsyncIteration이 발생합니다.
                     iterator = aiter(response_stream)
                     while True:
+                        # 전체 종료 시각까지 남은 시간만 다음 읽기에 줍니다. 연결이 오래 걸렸다면
+                        # 조각을 읽을 시간도 그만큼 줄어듭니다.
                         remaining = deadline - loop.time()
                         if remaining <= 0:
                             raise asyncio.TimeoutError
@@ -114,19 +149,25 @@ class GeminiService:
                             break
                         if chunk.text:
                             full_response += chunk.text
+                            # 이 자료를 호출한 API에 전달하고 잠시 멈춥니다. 호출자가 다음 조각을
+                            # 요청하면 여기 뒤부터 이어서 실행합니다.
                             yield {
                                 "text": chunk.text,
                                 "done": False,
                                 "error": None
                             }
                 finally:
+                    # 스트림이 aclose 정리 기능을 제공하는지 확인합니다. 자원을 정리하되 정리가 원래
+                    # 결과를 덮어쓰지 않게 합니다.
                     close = getattr(response_stream, "aclose", None)
                     if close is not None:
                         try:
+                            # 정리는 별도로 최대 1초만 기다립니다. SDK가 닫히지 않아도 원래 AI
+                            # 타임아웃 결과를 계속 전달합니다.
                             await asyncio.wait_for(close(), timeout=1.0)
                         except Exception as close_error:
-                            # Cleanup must not replace the AI result or expose
-                            # SDK exception text. Cancellation still propagates.
+                            # 정리 실패는 원래 AI 결과를 덮거나 SDK 예외 원문을 노출하지 않게 처리합니다.
+                            # 호출자 취소는 그대로 전달되어야 하므로 취소 예외를 성공으로 바꾸지 않습니다.
                             logger.warning(
                                 "ai_stream_close_failed request_id=%s error_type=%s",
                                 request_id, type(close_error).__name__
@@ -135,6 +176,8 @@ class GeminiService:
                 latency_ms = int((time.perf_counter() - start_time) * 1000)
                 log_ai_call_success(request_id=request_id, latency_ms=latency_ms)
 
+                # 이 자료를 호출한 API에 전달하고 잠시 멈춥니다. 호출자가 다음 조각을 요청하면 여기 뒤부터
+                # 이어서 실행합니다.
                 yield {
                     "text": "",
                     "done": True,
@@ -144,17 +187,22 @@ class GeminiService:
                 }
                 return
 
+            # 제한시간 초과를 고정 오류 종류와 사용자 안내로 바꾸고, 이미 받은 답변 조각은 보존합니다.
             except asyncio.TimeoutError:
                 latency_ms = int((time.perf_counter() - start_time) * 1000)
                 error_msg = "AI_TIMEOUT"
                 log_ai_call_failed(request_id=request_id, error=error_msg, latency_ms=latency_ms)
                 friendly_err = "\n\n⚠️ **현재 응답이 지연되고 있어요. 잠시 후 다시 시도해 주세요. (error: AI_TIMEOUT)**"
                 full_response += friendly_err
+                # 이 자료를 호출한 API에 전달하고 잠시 멈춥니다. 호출자가 다음 조각을 요청하면 여기 뒤부터
+                # 이어서 실행합니다.
                 yield {
                     "text": friendly_err,
                     "done": False,
                     "error": None
                 }
+                # 이 자료를 호출한 API에 전달하고 잠시 멈춥니다. 호출자가 다음 조각을 요청하면 여기 뒤부터
+                # 이어서 실행합니다.
                 yield {
                     "text": "",
                     "done": True,
@@ -165,6 +213,8 @@ class GeminiService:
                 return
             except Exception as e:
                 latency_ms = int((time.perf_counter() - start_time) * 1000)
+                # 현재 기존 로직은 SDK 예외 원문을 기록합니다. 예외 비출력 정리는 별도 후속이며 이 주석이
+                # 민감정보를 가려 주는 것은 아닙니다.
                 log_ai_call_failed(request_id=request_id, error=str(e), latency_ms=latency_ms)
                 err_str = str(e)
                 if "404" in err_str or "not found" in err_str.lower():
@@ -176,11 +226,15 @@ class GeminiService:
                     friendly_err = f"\n\n⚠️ **AI 서비스 오류가 발생했습니다: {err_str[:100]}**"
                 
                 full_response += friendly_err
+                # 이 자료를 호출한 API에 전달하고 잠시 멈춥니다. 호출자가 다음 조각을 요청하면 여기 뒤부터
+                # 이어서 실행합니다.
                 yield {
                     "text": friendly_err,
                     "done": False,
                     "error": None
                 }
+                # 이 자료를 호출한 API에 전달하고 잠시 멈춥니다. 호출자가 다음 조각을 요청하면 여기 뒤부터
+                # 이어서 실행합니다.
                 yield {
                     "text": "",
                     "done": True,
@@ -190,13 +244,17 @@ class GeminiService:
                 }
                 return
 
-        # Case 2: Smart Demo / Mock Fallback Mode
+        # 2. 실제 AI 호출 없이 준비된 답변을 사용하는 Demo 경로입니다.
+        # 이 아래는 실제 Google 검색/AI 없이 미리 준비한 답변을 쓰는 Demo 경로입니다. 실제 서비스 시험
+        # 결과와 구분합니다.
         mock_reply = self._generate_mock_reply(current_question)
         chunks = self._chunk_text(mock_reply)
 
         for chunk in chunks:
-            await asyncio.sleep(0.04)  # Natural typing speed simulation
+            await asyncio.sleep(0.04)  # 실제 AI 대신 Demo 글자가 조금씩 나타나도록 기다립니다.
             full_response += chunk
+            # 이 자료를 호출한 API에 전달하고 잠시 멈춥니다. 호출자가 다음 조각을 요청하면 여기 뒤부터 이어서
+            # 실행합니다.
             yield {
                 "text": chunk,
                 "done": False,
@@ -206,6 +264,8 @@ class GeminiService:
         latency_ms = int((time.perf_counter() - start_time) * 1000)
         log_ai_call_success(request_id=request_id, latency_ms=latency_ms)
 
+        # 이 자료를 호출한 API에 전달하고 잠시 멈춥니다. 호출자가 다음 조각을 요청하면 여기 뒤부터 이어서
+        # 실행합니다.
         yield {
             "text": "",
             "done": True,
@@ -215,7 +275,9 @@ class GeminiService:
         }
 
     def _generate_mock_reply(self, question: str) -> str:
-        """Generates a rich, educational mock response for AI/SW students."""
+        """실제 AI를 호출하지 않고 질문의 특정 단어에 맞춘 Demo 답변을 만듭니다. 웹 검색이나 새 지식을 얻는
+        동작은 없습니다.
+        """
         q_lower = question.lower()
 
         if "안녕" in q_lower or "hi" in q_lower or "hello" in q_lower or "반가" in q_lower:
@@ -289,9 +351,11 @@ class GeminiService:
             )
 
     def _chunk_text(self, text: str, chunk_size: int = 4) -> List[str]:
-        """Splits text into small token-like chunks for mock streaming."""
+        """Demo 문자열을 작은 조각으로 나눠 실제 스트리밍처럼 보여 줍니다. 기본 4글자 단위이며 AI의 실제
+        토큰과 같은 단위는 아닙니다.
+        """
         return [text[i:i + chunk_size] for i in range(0, len(text), chunk_size)]
 
 
-# Global service instance
+# 앱에서 공통으로 사용할 AI 서비스 객체를 만듭니다. 설정은 생성 시 읽습니다.
 gemini_service = GeminiService()

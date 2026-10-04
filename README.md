@@ -53,6 +53,7 @@ Windows PowerShell의 파일 복사는 `Copy-Item .env.example .env`를 사용�
 | `DATABASE_URL` | 로컬 `sqlite:///./chatbot.db`, 배포는 보존할 파일의 절대 경로 권장 |
 | `GEMINI_API_KEY` | 서버 전용 AI API 키. 빈 값이면 Mock |
 | `GEMINI_MODEL_NAME` | AI 모델 ID, 기본 `gemma-4-26b-a4b-it` |
+| `GEMINI_SEARCH_ENABLED` | Google Search 도구 제공 여부, 기본 `True`. 실제 검색 여부는 모델이 판단하며 `False`로 끌 수 있음 |
 | `AI_TIMEOUT_SECONDS` | 연결 시작부터 응답 스트림 완료까지 공유하는 전체 제한, 기본 `30`초. SDK 스트림 정리는 별도로 최대 1초 |
 | `MAX_HISTORY_MESSAGES` | 실제 AI에 전달할 최근 메시지 수, `10`개 (질문·답변 각각 한 메시지) |
 | `SYSTEM_INSTRUCTION` | 선택: 건설 도메인 시스템 지시문 재정의. 생략 시 코드 기본값 사용 |
@@ -215,6 +216,12 @@ users (1) ── (N) chat_sessions (1) ── (N) chat_messages
 | 프론트 / 별도 담당자 없음 (사용자 설명) | DB·로그 담당자의 요청으로 가입·API 주소 연동 및 현장노트 UI 개편. `dev/log-frontend-integration`의 `ea431c8`까지 커밋·푸시·배포 완료 | [프론트 저장소](https://github.com/cocoa7-1/chat-fe) |
 
 팀원별 유의미한 커밋 10회 이상은 모든 팀원에 대해 아직 충족됐다고 확인할 수 없습니다. [미션 점검표](docs/mission-checklist.md)에 확인 범위와 남은 항목을 기록했습니다. 실제 작업·검증·문서화 이력을 남기며 빈 커밋으로 수를 채우지 않습니다.
+
+## 학습 자료
+
+처음 공부할 때는 [챗봇 학습 가이드](docs/deep_dive_study_guide.md) 한 문서에서 시작합니다. 전체 흐름·용어·코드 읽기 순서·실패별 저장 결과를 담았습니다. 기준은 현재 로컬 작업 트리이며 배포 상태는 별도 근거로 확인합니다.
+
+담당자별 실습은 [인증](docs/roles/auth_guide.md), [DB·로그](docs/roles/log_db_guide.md), [AI·채팅](docs/roles/chat_api_guide.md) 가이드로 이어집니다. 기존 기능을 다시 만드는 과제와 고정된 커밋 분할 레시피는 정리했습니다. 미션 상태는 [미션 점검표](docs/mission-checklist.md), 배포 실행은 [배포 가이드](docs/deployment.md)를 따릅니다.
 
 ## 테스트
 

@@ -1,88 +1,40 @@
-# 💾 Role 2: 데이터 & 로깅 (DB & Logging) 담당자 완벽 가이드
+# DB·로그 담당자 학습·실습 가이드
 
-> **환영합니다!** 본 문서는 **SQLite 데이터베이스 모델링, 대화 이력 영속화, 4대 핵심 구조화 로깅, 통계 집계 및 CLI/SQL 검증 도구**를 완벽하게 정복하기 위한 실전 가이드입니다.
+갱신: 2026-10-04, 현재 로컬 작업 트리 기준. 전체 요청·실패 흐름과 집계 정의는 [통합 학습 가이드](../deep_dive_study_guide.md), 실행·API 필드는 [README](../../README.md)를 따른다.
 
----
+## 읽을 코드
 
-## 🌟 1. 이 파트의 본질적 의미와 중요성 (Why this matters)
+| 파일 | 살펴볼 내용 |
+|---|---|
+| [models/chat.py](../../app/models/chat.py) | 대화방·메시지·FK·relationship |
+| [core/database.py](../../app/core/database.py) | engine·SessionLocal·get_db |
+| [api/v1/chat.py](../../app/api/v1/chat.py) | 질문과 답변의 별도 commit·rollback |
+| [api/v1/logs.py](../../app/api/v1/logs.py) | 소유권·필터·count·통계 |
+| [core/logging.py](../../app/core/logging.py) / [middlewares.py](../../app/core/middlewares.py) | 이벤트·request_id와 측정 범위 |
+| [check_logs.py](../../scripts/check_logs.py) / [check_logs.sql](../../scripts/check_logs.sql) | CLI·SQL 집계 |
+| [test_db.py](../../tests/test_db.py) / [test_chat_reliability.py](../../tests/test_chat_reliability.py) | 모델·초기 저장·답변 저장 장애 검증 |
 
-AI 챗봇 서비스에서 **데이터베이스와 로깅은 서비스의 '블랙박스'이자 '기억 장치'**입니다.
+## 현재 기능과 남은 한계
 
-1. **대화 이력을 DB에 저장해야 하는 이유**
-   - 사용자가 페이지를 새로고침하거나 며칠 뒤 다시 접속했을 때 이전 대화 맥락을 그대로 복원하고, AI에게 이전 대화를 주입(Multi-turn Context)하기 위해 필수적입니다.
-2. **지연시간(`latency_ms`)과 상태(`status`)를 기록하는 이유**
-   - AI API가 평균 몇 초 만에 응답하는지, 어떤 질문에서 타임아웃이나 에러가 발생하는지 모니터링하여 시스템 품질을 지속적으로 개선할 수 있습니다.
-3. **구조화된 4대 표준 로그 이벤트의 힘**
-   - 단순한 텍스트 출력이 아니라 `request_id`, `user_id`, `latency_ms`가 포함된 구조화된 로그는 실무에서 대규모 분산 시스템을 추적(Distributed Tracing)하는 핵심 기반입니다.
+세션 필터, 페이지네이션 전체 count, `/logs/stats`, CLI 색상 표시, SQL TOP 5·시간대 집계는 이미 구현돼 있다. 이를 새 기능 구현 과제로 반복하지 않는다.
 
----
+세션·질문 저장 이벤트에는 request_id와 entity가 있다. ChatMessage 행에는 request_id·turn_id가 없다. 이벤트 로그와 DB 대화 기록의 연결 범위를 구별한다. db_save_failed가 발생했다고 예외 원인이 항상 DB인 것은 아니다.
 
-## 📂 2. 내가 맡은 핵심 파일 및 디렉토리 구조
+SQLite 연결에는 check_same_thread=False만 명시돼 있다. timeout=30·WAL·외래키 PRAGMA 활성화가 설정돼 있다고 설명하지 않는다. DB 잠금은 쓰기 트랜잭션의 길이·경합·연결 설정을 확인해서 판단한다. ORM cascade와 직접 SQL 삭제에서의 FK 강제는 따로 검증한다.
 
-| 파일 경로 | 핵심 역할 | 내가 주로 만질 부분 |
-| :--- | :--- | :--- |
-| `app/api/v1/logs.py` | 대화 로그 조회 및 통계 API | 사용자별 로그 페이징, 통계 집계 로직 |
-| `app/core/database.py` | SQLite 엔진 및 SQLAlchemy 세션 제너레이터 | DB 연결 풀, 세션 관리 (`get_db`) |
-| `app/core/logging.py` | 4대 표준 로그 이벤트 포맷터 | 로그 출력 포맷, 색상, 파일 로깅 |
-| `app/core/middlewares.py` | 요청별 고유 UUID `request_id` 발급 미들웨어 | HTTP 헤더 및 로깅 컨텍스트 주입 |
-| `app/models/chat.py` | `ChatSession` 및 `ChatMessage` ORM 모델 | 테이블 컬럼 및 외래키(FK) 관계 설정 |
-| `scripts/check_logs.py` | 터미널용 DB 로그 검증 CLI 도구 | 예쁜 터미널 테이블 출력, 메트릭 집계 |
-| `scripts/check_logs.sql` | SQLite 직접 쿼리용 표준 SQL 스크립트 | SELECT 쿼리, 통계 GROUP BY 쿼리 |
-| `tests/test_db.py` | DB 모델 관계 및 CRUD 단위 테스트 | 세션-메시지 종속 삭제, 롤백 테스트 |
+## 읽기·검증 실습
 
----
+1. User → ChatSession → ChatMessage 예시를 그리고 대화방과 SQLAlchemy Session을 구분한다.
+2. 초기 질문 저장 실패와 답변 저장 실패의 commit 경계를 따라간다. 질문만 남는 경우를 설명한다.
+3. 두 사용자의 격리 데이터로 일반 사용자·관리자 조회 범위를 예측한다. limit보다 많은 데이터를 만들고 total과 items 길이가 다른지 확인한다.
+4. 지연시간 0·NULL·정상·오류 답변을 섞어서 API·CLI·SQL의 평균 대상 차이를 설명한다. SQL 파일도 쿼리별 모집단이 다를 수 있다.
+5. 신뢰성 테스트에서 DB 오류를 주입하는 방법을 읽고 SSE error·DB 행·저장 이벤트가 어떻게 대응하는지 확인한다.
+6. 필요하면 격리 DB에서 PRAGMA foreign_keys를 조회하고 ORM 삭제와 직접 SQL 삭제를 비교한다. 모델 선언만으로 실험 결과를 미리 확정하지 않는다.
 
-## 🚀 3. 당장 5분 만에 시작하는 체크리스트
+테스트와 CLI는 설정된 DB에 접근한다. 통합 가이드의 격리 준비 후 사용한다. 기존 앱 import의 init_db와 생성기 별도 SessionLocal까지 확인한다.
 
-```bash
-# 1. 내 브랜치로 이동
-git checkout dev/log
+## 설명 확인과 후속 개선 후보
 
-# 2. 내 파트 테스트 실행해보기
-pytest tests/test_db.py -v
+질문 success는 왜 AI 성공이 아닐까? 평균값을 비교하기 전에 무엇을 맞춰야 할까? 요청 ID만으로 DB 행까지 추적 가능한가?
 
-# 3. CLI 로그 검증 도구 실행해보기 (DB에 저장된 실제 데이터 확인!)
-python scripts/check_logs.py
-```
-
----
-
-## 🛠️ 4. 단계별 손쉬운 실습 과제 4단계 (Hands-on Experiments)
-
-### 🟢 Level 1: `scripts/check_logs.py`의 출력 포맷 커스텀하기
-- **파일**: `scripts/check_logs.py`
-- **목표**: 터미널 출력에 이모지(👷, 🤖, ⏱️)를 추가하고, 지연시간이 3초(3000ms) 이상인 경우 노란색/빨간색 경고 표시 붙이기
-
-### 🟡 Level 2: 특정 세션의 대화 로그만 필터링하는 쿼리 및 API 확장
-- **파일**: `app/api/v1/logs.py`
-- **목표**: `GET /api/v1/logs?session_id=1` 쿼리 파라미터를 추가하여 특정 대화방의 로그만 골라볼 수 있도록 기능 추가
-
-### 🟠 Level 3: 대화 통계 요약 엔드포인트(`GET /api/v1/logs/stats`) 만들기
-- **파일**: `app/api/v1/logs.py`, `app/schemas/chat.py`
-- **목표**: 로그인한 사용자의 총 대화 수, 총 세션 수, 평균 AI 응답 시간(ms), 성공률(%)을 계산하여 반환하는 통계 API 개발
-
-### 🔴 Level 4: `scripts/check_logs.sql`에 실무 SQL 쿼리 추가하기
-- **파일**: `scripts/check_logs.sql`
-- **목표**: 가장 질문을 많이 한 상위 사용자 TOP 5, 시간대별 질문 건수 집계 SQL 작성
-
----
-
-## 📝 5. 10회 이상 의미 있는 커밋(Commit) 분할 레시피
-
-1. `feat(db): Add check_logs CLI formatting with latency color badges`
-2. `feat(logs): Add session_id query parameter filter in GET /logs`
-3. `test(db): Add unit test for filtered log queries`
-4. `feat(logs): Implement user chat statistics endpoint (GET /logs/stats)`
-5. `test(logs): Add test case for chat statistics calculations`
-6. `refactor(logging): Enhance structured log formatting for db_save_success event`
-7. `feat(sql): Add advanced analytical queries to check_logs.sql`
-8. `docs(db): Document SQLite schema ERD and query optimization notes`
-9. `refactor(db): Add index on ChatMessage(user_id, created_at) for fast retrieval`
-10. `test(db): Ensure full coverage of cascade deletes and session integrity`
-
----
-
-## ❓ 6. 자주 겪는 오류 및 해결책 (Troubleshooting)
-
-- **`sqlite3.OperationalError: database is locked`**:
-  - SQLite는 여러 프로세스가 동시에 쓸 때 락이 걸릴 수 있습니다. `app/core/database.py`에서 `connect_args={"check_same_thread": False, "timeout": 30}` 옵션이 잘 설정되어 있는지 확인하세요.
+후속 후보는 부분 답변 보존 정책, DB 행의 요청 연결, 이력 조회량 제한, 집계 정의 통일이다. 코드 읽기·재현 뒤 하나를 정하고 필요한 수정과 검증만 수행한다. 이미 있는 기능이나 커밋 수를 목표로 작업을 만들지 않는다.
