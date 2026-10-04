@@ -46,7 +46,7 @@ def run_tests():
     assert res.status_code == 200, f"로그인 실패: {res.text}"
     token = res.json()["access_token"]
     cookies = {"access_token": token}
-    print(f"  [OK] 로그인 성공: Token={token[:25]}... (HTTP-Only Cookie 발급 완료)")
+    print("  [OK] 로그인 성공: 토큰 발급 확인 (값은 출력하지 않음)")
 
     # 3. 시험용 대화를 만듭니다.
     print("\n[Step 3] 대화 세션 생성 (/api/v1/chat/sessions)...")

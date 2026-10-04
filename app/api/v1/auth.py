@@ -80,9 +80,8 @@ def login(response: Response, user_in: UserLogin, db: Session = Depends(get_db))
         max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
         expires=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
         samesite="lax",
-        # 현재 코드의 기존 쿠키 설정입니다. HTTPS에서만 쿠키를 보내는 secure=True 전환은 별도 후속이며
-        # 현재 FE는 Bearer를 사용합니다.
-        secure=False  # 현재 기존 값은 False이며 HTTPS 전용 쿠키 설정은 별도 후속입니다.
+        # 운영 인증 쿠키는 HTTPS에서만 전송합니다. 현재 FE의 Bearer 인증도 그대로 지원합니다.
+        secure=settings.is_production
     )
 
     return Token(
@@ -102,7 +101,8 @@ def logout(response: Response):
     response.delete_cookie(
         key=settings.COOKIE_NAME,
         httponly=True,
-        samesite="lax"
+        samesite="lax",
+        secure=settings.is_production
     )
     return {"message": "로그아웃되었습니다."}
 

@@ -20,6 +20,8 @@ class Settings(BaseSettings):
     DEBUG: bool = True
     PORT: int = 8000
     HOST: str = "0.0.0.0"
+    # .env에서는 JSON 배열로 지정합니다. 미설정 운영 서버는 실제 프론트 한 곳만 허용합니다.
+    CORS_ALLOWED_ORIGINS: list[str] = Field(default_factory=lambda: ["https://b7-1-chat-fe.vercel.app"])
 
     # JWT 서명과 로그인 관련 설정입니다.
     # JWT 서명의 비밀키입니다. 키가 바뀌면 이전 키로 만든 토큰은 검증되지 않을 수 있어 자동 교체하지 않습니다.
@@ -74,13 +76,17 @@ class Settings(BaseSettings):
         extra="ignore"
     )
 
+    @property
+    def is_production(self) -> bool:
+        return self.APP_ENV.strip().lower() in {"production", "prod"}
+
     def validate_production_security(self) -> None:
         """운영 모드에서 공개 개발 키나 너무 짧은 키로 서버가 시작되지 않게 합니다. 오류에 실제 설정값을 넣지
         않습니다.
         """
         # 운영 조건일 때만 엄격하게 검사합니다. encode("utf-8")는 문자열을 바이트로 바꿔 글자 수가 아닌
         # 바이트 길이를 셉니다.
-        if self.APP_ENV.strip().lower() in {"production", "prod"}:
+        if self.is_production:
             if self.SECRET_KEY.strip() == DEVELOPMENT_SECRET_KEY or len(self.SECRET_KEY.strip().encode("utf-8")) < 32:
                 # 모델 검사 예외에 전체 설정 입력값이 포함될 수 있어 별도의 고정 오류를 사용합니다.
                 # 실제 비밀값이 예외에 섞이지 않게 하는 처리입니다.

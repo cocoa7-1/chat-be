@@ -5,7 +5,7 @@
 from typing import Optional, List
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
-from sqlalchemy import select, desc, func
+from sqlalchemy import select, desc, func, case
 from app.core.database import get_db
 from app.models.chat import ChatMessage, ChatSession
 from app.models.user import User
@@ -91,35 +91,35 @@ def get_chat_stats(
     # 범위를 선택합니다.
     target_user_id = user_id if (current_user.is_admin and user_id) else (None if (current_user.is_admin and not user_id) else current_user.id)
 
-    # 기본 조회를 만들고 아래에서 사용자 범위를 좁힙니다.
-    msg_query = select(ChatMessage)
-    sess_query = select(ChatSession)
+    # 질문/답변 본문을 읽지 않고 DB에서 개수와 평균만 계산합니다.
+    successful = (ChatMessage.role == "assistant") & (ChatMessage.status == "success")
+    msg_query = select(
+        func.count(ChatMessage.id),
+        func.count(case((ChatMessage.role == "user", 1))),
+        func.count(case((ChatMessage.role == "assistant", 1))),
+        func.count(case((successful, 1))),
+        func.avg(case((successful & (ChatMessage.latency_ms != 0), ChatMessage.latency_ms))),
+    )
+    sess_query = select(func.count(ChatSession.id))
 
     if target_user_id:
         msg_query = msg_query.where(ChatMessage.user_id == target_user_id)
         sess_query = sess_query.where(ChatSession.user_id == target_user_id)
 
-    all_messages = db.scalars(msg_query).all()
-    total_sessions = len(db.scalars(sess_query).all())
-
-    user_questions = [m for m in all_messages if m.role == "user"]
-    ai_answers = [m for m in all_messages if m.role == "assistant"]
-    success_answers = [m for m in ai_answers if m.status == "success"]
-
-    # 목록 조건식으로 성공 답변 중 소요시간이 있는 값만 고릅니다. 질문의 시간은 평균에 넣지 않습니다.
-    latencies = [m.latency_ms for m in success_answers if m.latency_ms]
-    avg_latency = int(sum(latencies) / len(latencies)) if latencies else 0
+    total_messages, total_questions, total_answers, total_success, latency = db.execute(msg_query).one()
+    total_sessions = db.scalar(sess_query) or 0
+    avg_latency = int(latency) if latency is not None else 0
 
     success_rate = (
-        round((len(success_answers) / len(user_questions)) * 100, 1)
-        if user_questions
+        round((total_success / total_questions) * 100, 1)
+        if total_questions
         else 100.0
     )
 
     return ChatStatsResponse(
-        total_messages=len(all_messages),
-        total_questions=len(user_questions),
-        total_answers=len(ai_answers),
+        total_messages=total_messages,
+        total_questions=total_questions,
+        total_answers=total_answers,
         total_sessions=total_sessions,
         avg_latency_ms=avg_latency,
         success_rate_percent=success_rate

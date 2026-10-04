@@ -56,6 +56,7 @@ nano .env
 ```ini
 APP_ENV=production
 DEBUG=false
+CORS_ALLOWED_ORIGINS=["https://b7-1-chat-fe.vercel.app"]
 SECRET_KEY=서버에서_생성한_실제_랜덤키로_교체
 ALGORITHM=HS256
 DATABASE_URL=sqlite:////home/ubuntu/chat-data/chatbot.db
@@ -95,6 +96,8 @@ WantedBy=multi-user.target
 
 Pydantic이 WorkingDirectory의 .env를 읽습니다. 배포에는 --reload를 사용하지 않습니다.
 
+단일 worker를 유지합니다. 메모리 요청 제한은 여러 worker 사이에서 공유되지 않습니다. 현재 Caddy는 `127.0.0.1:8000`으로 전달하며, Uvicorn은 기본으로 프록시 헤더 처리를 켜고 loopback을 신뢰합니다(버전에 따라 `127.0.0.1` 또는 `127.0.0.1,::1`). `FORWARDED_ALLOW_IPS`로 기본값을 덮어쓰지 않았는지 확인하세요. 명시하려면 같은 ExecStart에 `--proxy-headers --forwarded-allow-ips=127.0.0.1`을 붙입니다. `*`로 모든 클라이언트의 전달 헤더를 신뢰하지 않습니다. [Uvicorn 설정](https://uvicorn.dev/settings/#http).
+
 ```bash
 sudo systemctl daemon-reload
 sudo systemctl enable --now chat-be
@@ -125,7 +128,9 @@ DNS와 80/443 접근이 준비되면 Caddy가 HTTPS 인증서를 관리합니다
 
 Vercel: GitHub로 로그인 → Add New / Project → chat-fe Import → Framework Other → 루트 디렉토리 → 빌드 없음, Output 루트 `.` → 배포 브랜치 지정. FE main에 필요한 수정이 아직 없으면 먼저 FE 작업 PR을 반영하거나 검증된 FE develop으로 시험합니다. 공개 사이트의 실제 커밋을 확인합니다.
 
-최종적으로 API CORS에 실제 Vercel Origin과 팀의 로컬 Origin을 포함합니다. Origin에는 경로나 마지막 `/`를 넣지 않습니다. Preview URL은 Production과 다른 출처입니다.
+API CORS는 `CORS_ALLOWED_ORIGINS`의 JSON 배열로 제한합니다. 운영은 실제 Vercel Origin 한 곳, 개발은 `.env.example`의 로컬 Origin을 사용합니다. 미설정 기본값은 `https://b7-1-chat-fe.vercel.app`입니다. Origin에는 경로나 마지막 `/`를 넣지 않습니다. Preview URL은 Production과 다른 출처이며 필요할 때만 명시적으로 추가합니다. 변경 후 백엔드를 재시작합니다.
+
+운영(`APP_ENV=production/prod`) 로그인 쿠키에는 `Secure`가 적용됩니다. 현재 Vercel 프론트는 Bearer 인증을 사용하므로 쿠키 인증 전환이나 `SameSite` 변경은 필요하지 않습니다.
 
 ## 6. 완료 확인과 종료
 

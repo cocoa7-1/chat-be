@@ -126,3 +126,50 @@ def test_log_statistics_endpoint():
     assert stats["avg_latency_ms"] >= 0
     assert stats["success_rate_percent"] == 100.0
 
+
+def test_statistics_aggregate_without_loading_bodies_and_preserve_user_scope(isolated_chat):
+    """성공/실패·0/빈 소요시간·관리자 조회 범위를 비교하고 본문을 읽지 않는지도 확인합니다."""
+    from sqlalchemy import event
+
+    client, factory, engine = isolated_chat
+    with factory() as db:
+        owner = db.scalar(select(User).where(User.username == "reliability_user"))
+        other = User(username="other_stats", nickname="Other", password_hash="unused")
+        db.add(other)
+        db.flush()
+        other_id, owner_id = other.id, owner.id
+        sessions = [ChatSession(user_id=owner_id, title="Owner"), ChatSession(user_id=other_id, title="Other")]
+        db.add_all(sessions)
+        db.flush()
+        for _ in range(4):
+            db.add(ChatMessage(user_id=owner_id, session_id=sessions[0].id, role="user", content="fixture"))
+        for status, latency in [("success", 100), ("success", 101), ("success", 0), ("success", None), ("error", 900), ("timeout", 120)]:
+            db.add(ChatMessage(user_id=owner_id, session_id=sessions[0].id, role="assistant", content="fixture", status=status, latency_ms=latency))
+        db.add_all([
+            ChatMessage(user_id=other_id, session_id=sessions[1].id, role="user", content="fixture"),
+            ChatMessage(user_id=other_id, session_id=sessions[1].id, role="assistant", content="fixture", status="success", latency_ms=3000),
+        ])
+        db.commit()
+
+    statements = []
+
+    def capture(connection, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+
+    event.listen(engine, "before_cursor_execute", capture)
+    try:
+        own = client.get(f"/api/v1/logs/stats?user_id={other_id}").json()
+    finally:
+        event.remove(engine, "before_cursor_execute", capture)
+    assert own == dict(total_messages=10, total_questions=4, total_answers=6, total_sessions=1, avg_latency_ms=100, success_rate_percent=100.0)
+    assert all("chat_messages.content" not in statement.lower() for statement in statements)
+    with factory() as db:
+        db.get(User, owner_id).is_admin = True
+        db.commit()
+    all_users = client.get("/api/v1/logs/stats").json()
+    assert all_users == dict(total_messages=12, total_questions=5, total_answers=7, total_sessions=2, avg_latency_ms=1067, success_rate_percent=100.0)
+    other_stats = client.get(f"/api/v1/logs/stats?user_id={other_id}").json()
+    assert other_stats == dict(total_messages=2, total_questions=1, total_answers=1, total_sessions=1, avg_latency_ms=3000, success_rate_percent=100.0)
+    empty = client.get("/api/v1/logs/stats?user_id=999999").json()
+    assert empty == dict(total_messages=0, total_questions=0, total_answers=0, total_sessions=0, avg_latency_ms=0, success_rate_percent=100.0)
+

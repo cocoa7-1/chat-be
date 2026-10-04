@@ -61,12 +61,11 @@ app.add_middleware(ChatLeaseMiddleware)
 # 이 처리기는 API 앞뒤에 공통으로 적용됩니다. API마다 같은 인증/로그 코드를 복사하지 않게 역할을 나눕니다.
 app.add_middleware(
     CORSMiddleware,
-    # CORS는 브라우저가 다른 출처의 서버에 요청할 수 있는지 정하는 규칙입니다. 현재 모든 출처를 허용하는 기존
-    # 설정이며 출처 제한은 후속입니다.
-    allow_origins=["*"],
+    # CORS는 허용 목록의 프론트만 브라우저에서 응답을 읽게 합니다. API 인증은 별도로 검사합니다.
+    allow_origins=settings.CORS_ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
+    allow_headers=["Authorization", "Content-Type"],
     expose_headers=["Retry-After", "X-Request-ID"],
 )
 
