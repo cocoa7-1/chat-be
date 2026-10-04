@@ -31,6 +31,7 @@ class GeminiService:
         self.model_name = settings.GEMINI_MODEL_NAME
         self.search_enabled = settings.GEMINI_SEARCH_ENABLED
         self.timeout_seconds = settings.AI_TIMEOUT_SECONDS
+        self.search_timeout_seconds = settings.AI_SEARCH_TIMEOUT_SECONDS
         self.system_instruction = settings.SYSTEM_INSTRUCTION
         self._client = None
 
@@ -79,7 +80,11 @@ class GeminiService:
         user_id: int,
         request_id: str,
         history: List[Dict[str, str]],
-        current_question: str
+        current_question: str,
+        model_name: Optional[str] = None,
+        search_enabled: Optional[bool] = None,
+        temperature: Optional[float] = None,
+        thinking_level: Optional[str] = None
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """질문과 과거 문맥을 보내고 AI 답변을 한 조각씩 전달합니다.
 
@@ -90,7 +95,11 @@ class GeminiService:
         보내 API가 저장할 내용을 확정하게 합니다. 연결과 모든 조각 읽기는 같은 제한시간을 공유합니다.
         """
         start_time = time.perf_counter()
-        log_ai_call_start(user_id=user_id, request_id=request_id, model=self.model_name)
+        # 요청별 지역 변수로 복사합니다. 공유 서비스의 속성을 바꾸면 다른 사용자 요청에 옵션이 섞입니다.
+        selected_model = model_name or self.model_name
+        use_search = self.search_enabled if search_enabled is None else search_enabled
+        timeout_seconds = self.search_timeout_seconds if use_search else self.timeout_seconds
+        log_ai_call_start(user_id=user_id, request_id=request_id, model=selected_model)
         
         full_response = ""
 
@@ -104,11 +113,13 @@ class GeminiService:
                 # 이름별 인수를 펼쳐 설정 객체를 만듭니다.
                 config_options = {
                     "system_instruction": self.system_instruction,
-                    "temperature": 0.7,
+                    "temperature": temperature if temperature is not None else (1.0 if selected_model.startswith("gemini-3") else 0.7),
                 }
                 # 검색 도구를 제공하지만 검색을 매번 강제하지는 않습니다. 실제 검색 지원/무료 할당량은 별도로
                 # 확인해야 합니다.
-                if self.search_enabled:
+                if thinking_level is not None:
+                    config_options["thinking_config"] = {"thinking_level": thinking_level}
+                if use_search:
                     config_options["tools"] = [{"google_search": {}}]
                 if hasattr(self, "_types") and self._types:
                     config = self._types.GenerateContentConfig(**config_options)
@@ -119,20 +130,20 @@ class GeminiService:
                 # yield를 가로지르는 전체 취소 구역은 사용하지 않습니다.
                 # 그렇게 하면 API가 받은 조각을 전송하는 동안 호출자까지 뜻밖에 취소될 수 있기 때문입니다.
                 loop = asyncio.get_running_loop()
-                # 종료 시각을 한 번만 계산합니다. 조각마다 새로 30초를 주면 답변이 조금씩 올 때 전체
+                # 종료 시각을 한 번만 계산합니다. 조각마다 새 제한을 주면 답변이 조금씩 올 때 전체
                 # 제한이 계속 늘어납니다.
-                deadline = loop.time() + self.timeout_seconds
+                deadline = loop.time() + timeout_seconds
                 response_stream = None
                 try:
                     # await는 기다리는 동안 다른 작업에 실행 기회를 줍니다. wait_for는 지정
                     # 시간이 지나면 기다리는 작업을 취소합니다.
                     response_stream = await asyncio.wait_for(
                         self._client.aio.models.generate_content_stream(
-                            model=self.model_name,
+                            model=selected_model,
                             contents=contents,
                             config=config
                         ),
-                        timeout=self.timeout_seconds
+                        timeout=timeout_seconds
                     )
                     # 비동기 반복자를 얻습니다. anext는 다음 조각을 요청하며 더 없으면
                     # StopAsyncIteration이 발생합니다.
@@ -192,7 +203,7 @@ class GeminiService:
                 latency_ms = int((time.perf_counter() - start_time) * 1000)
                 error_msg = "AI_TIMEOUT"
                 log_ai_call_failed(request_id=request_id, error=error_msg, latency_ms=latency_ms)
-                friendly_err = "\n\n⚠️ **현재 응답이 지연되고 있어요. 잠시 후 다시 시도해 주세요. (error: AI_TIMEOUT)**"
+                friendly_err = f"\n\n⚠️ **응답 제한시간({timeout_seconds:g}초)을 넘겼어요. 검색을 끄거나 추론 수준을 낮춰 다시 시도해 주세요. (error: AI_TIMEOUT)**"
                 full_response += friendly_err
                 # 이 자료를 호출한 API에 전달하고 잠시 멈춥니다. 호출자가 다음 조각을 요청하면 여기 뒤부터
                 # 이어서 실행합니다.
@@ -213,17 +224,18 @@ class GeminiService:
                 return
             except Exception as e:
                 latency_ms = int((time.perf_counter() - start_time) * 1000)
-                # 현재 기존 로직은 SDK 예외 원문을 기록합니다. 예외 비출력 정리는 별도 후속이며 이 주석이
-                # 민감정보를 가려 주는 것은 아닙니다.
-                log_ai_call_failed(request_id=request_id, error=str(e), latency_ms=latency_ms)
+                # SDK 예외 원문에는 요청값 등이 섞일 수 있어 고정 오류 코드만 밖으로 내보냅니다.
                 err_str = str(e)
+                error_code = "AI_RATE_LIMIT" if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str else "AI_SERVICE_ERROR"
+                log_ai_call_failed(request_id=request_id, error=error_code, latency_ms=latency_ms)
                 if "404" in err_str or "not found" in err_str.lower():
                     friendly_err = (
-                        f"\n\n⚠️ **AI 모델(`{self.model_name}`)을 찾을 수 없습니다. (error: 404 NOT_FOUND)**\n\n"
-                        f"> 💡 **해결 방법**: `.env` 파일의 `GEMINI_MODEL_NAME`을 `gemma-4-26b-a4b-it` 또는 `gemini-2.5-flash`로 지정해주세요."
+                        "\n\n⚠️ **선택한 AI 모델을 사용할 수 없습니다. 다른 모델을 선택해 주세요.**"
                     )
+                elif error_code == "AI_RATE_LIMIT":
+                    friendly_err = "\n\n⚠️ **선택한 모델의 사용량 한도에 도달했어요. 잠시 기다리거나 다른 모델을 선택해 주세요. (error: AI_RATE_LIMIT)**"
                 else:
-                    friendly_err = f"\n\n⚠️ **AI 서비스 오류가 발생했습니다: {err_str[:100]}**"
+                    friendly_err = "\n\n⚠️ **AI 서비스 오류가 발생했습니다. 잠시 후 다시 시도해 주세요. (error: AI_SERVICE_ERROR)**"
                 
                 full_response += friendly_err
                 # 이 자료를 호출한 API에 전달하고 잠시 멈춥니다. 호출자가 다음 조각을 요청하면 여기 뒤부터
@@ -240,7 +252,7 @@ class GeminiService:
                     "done": True,
                     "full_text": full_response,
                     "latency_ms": latency_ms,
-                    "error": "AI_SERVICE_ERROR"
+                    "error": error_code
                 }
                 return
 

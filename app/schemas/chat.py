@@ -3,8 +3,9 @@
 # 필수값이라는 뜻입니다.
 # 내부 id는 서버가 데이터를 연결할 때 쓰며 사용자 화면의 대화 순서를 뜻하지 않습니다.
 from datetime import datetime
-from typing import Optional, List
+from typing import Optional, List, Literal
 from pydantic import BaseModel, Field, ConfigDict, field_validator
+from app.core.ai_models import ModelName
 
 
 class ChatStreamRequest(BaseModel):
@@ -13,6 +14,11 @@ class ChatStreamRequest(BaseModel):
     """
     message: str = Field(..., min_length=1, max_length=2000, description="사용자 질문 (1~2000자)")
     session_id: Optional[int] = Field(None, description="대화 세션 ID (없을 경우 새 세션 자동 생성)")
+    # 생략하면 서버 기본 모델/검색 설정을 사용하므로 기존 클라이언트도 계속 동작합니다.
+    model: Optional[ModelName] = None
+    search_enabled: Optional[bool] = None
+    temperature: Optional[float] = Field(None, ge=0, le=2, allow_inf_nan=False)
+    thinking_level: Optional[Literal["minimal", "low", "medium", "high"]] = None
 
     # 필드 길이 검사에 더해 공백만 있는 질문을 거절하는 사용자 정의 검사입니다.
     @field_validator("message")

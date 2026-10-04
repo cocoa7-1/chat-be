@@ -54,7 +54,8 @@ Windows PowerShell의 파일 복사는 `Copy-Item .env.example .env`를 사용�
 | `GEMINI_API_KEY` | 서버 전용 AI API 키. 빈 값이면 Mock |
 | `GEMINI_MODEL_NAME` | AI 모델 ID, 기본 `gemma-4-26b-a4b-it` |
 | `GEMINI_SEARCH_ENABLED` | Google Search 도구 제공 여부, 기본 `True`. 실제 검색 여부는 모델이 판단하며 `False`로 끌 수 있음 |
-| `AI_TIMEOUT_SECONDS` | 연결 시작부터 응답 스트림 완료까지 공유하는 전체 제한, 기본 `30`초. SDK 스트림 정리는 별도로 최대 1초 |
+| `AI_TIMEOUT_SECONDS` | 검색 없는 요청의 연결부터 스트림 완료까지 전체 제한, 기본 `60`초. SDK 스트림 정리는 별도로 최대 1초 |
+| `AI_SEARCH_TIMEOUT_SECONDS` | 검색 도구를 제공하는 요청의 전체 제한, 기본 `90`초. 검색 실행 여부와 무관하게 요청 시작 시 결정 |
 | `MAX_HISTORY_MESSAGES` | 실제 AI에 전달할 최근 메시지 수, `10`개 (질문·답변 각각 한 메시지) |
 | `SYSTEM_INSTRUCTION` | 선택: 건설 도메인 시스템 지시문 재정의. 생략 시 코드 기본값 사용 |
 | `REGISTER_REQUESTS_PER_MINUTE` | IP당 최근60초 가입 요청, 기본5회 |
@@ -64,6 +65,23 @@ Windows PowerShell의 파일 복사는 `Copy-Item .env.example .env`를 사용�
 | `CHAT_USER_CONCURRENCY`, `CHAT_GLOBAL_CONCURRENCY` | 진행 중 채팅 사용자당1개·전체3개 |
 
 JWT 키는 사용자가 직접 생성한 충분한 랜덤값을 `.env`의 `SECRET_KEY`에만 넣습니다. `APP_ENV=production/prod`에서는 공개 개발 기본값·빈 값·32바이트 미만의 키로 서버를 시작할 수 없습니다. 기존 키를 자동 교체하지 않습니다. `.env`, DB, 로그는 `.gitignore`에 포함됩니다. AI 키·JWT 키·로그인 토큰 원문을 대화·로그·프론트 JS·Git에 넣지 않습니다.
+
+### 요청별 모델과 고급 설정
+
+로그인한 사용자는 `GET /api/v1/chat/models`에서 목록·서버 기본값·모델별 추론 수준을 받습니다. `POST /api/v1/chat/stream`에 아래 선택 필드를 추가할 수 있습니다. 생략하면 기존 기본값을 사용하며 DB 구조는 바뀌지 않습니다.
+
+| 필드 | 허용 값 / 동작 |
+|---|---|
+| `model` | `gemma-4-26b-a4b-it`, `gemini-3.8-flash`, `gemini-3.5-flash-lite`, `gemma-4-31b-it` |
+| `search_enabled` | 검색 도구 제공 여부. 검색이 실행됐다는 증거가 아님 |
+| `temperature` | 유한한 숫자 0~2. 생략 시 앱 기본값 Gemma 0.7, Gemini 3 계열 1.0 |
+| `thinking_level` | Gemma: `minimal`(끄기)/`high`(켜기), Gemini 3.8 Flash: `low`/`medium`/`high`, 3.5 Flash-Lite: `minimal`/`low`/`medium`/`high`. 생략 시 공급자 기본값 |
+
+현재 선택 모델은 추론 **수준**을 사용하므로 토큰 수 `thinking_budget`을 임의로 보내지 않습니다. 옵션은 요청별 지역 변수로 처리해 동시 사용자에게 섞이지 않습니다. 지원하지 않는 모델·수준과 잘못된 temperature는 질문 저장·AI 호출 전에 422로 거절합니다. 공급자 429는 `AI_RATE_LIMIT`으로 구분하고 예외 원문은 응답·로그에 노출하지 않습니다. 자동 모델 변경·재시도는 하지 않습니다.
+
+목록의 모델이 모든 계정에서 사용 가능하거나 무료임을 보장하지 않습니다. RPM/TPM/RPD는 Google 프로젝트별 AI Studio 값을 확인합니다. 기본 Gemma 26B는 학습용 사용량 여유를 고려한 선택이며 속도 순위를 실측한 결과가 아닙니다. 기존 운영 `.env`에 `AI_TIMEOUT_SECONDS=30`이 있으면 일반 요청은 계속 30초입니다. 새 검색 제한은 별도 `AI_SEARCH_TIMEOUT_SECONDS`를 사용하며 기본 90초입니다.
+
+지원 근거: [Gemma API와 추론·검색](https://ai.google.dev/gemma/docs/core/gemma_on_gemini_api), [Gemini 추론 수준](https://ai.google.dev/gemini-api/docs/thinking), [모델 목록](https://ai.google.dev/gemini-api/docs/models), [비율 제한](https://ai.google.dev/gemini-api/docs/rate-limits). 실제 생성·검색·출처 표시와 운영 브라우저 회귀는 격리 시험과 별도로 확인해야 합니다.
 
 ```bash
 uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload

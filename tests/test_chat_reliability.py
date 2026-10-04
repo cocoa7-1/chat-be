@@ -74,6 +74,7 @@ def fake_service(monkeypatch, stream, connection_delay=0, timeout=0.12):
     service = gm.GeminiService()
     service.api_key = "fake-sdk-only"
     service.timeout_seconds = timeout
+    service.search_timeout_seconds = timeout
 
     async def connect(**kwargs):
         """실제 네트워크 연결 대신 시험이 준비한 응답 스트림을 반환합니다. 일부 시험에서는 전달된 질문/설정도

@@ -38,7 +38,9 @@ class Settings(BaseSettings):
     # True이면 AI 요청에 Google 검색 도구를 넣습니다. 실제 검색 여부는 모델이 판단합니다.
     # 검색 지원·무료 할당량은 모델과 Google 프로젝트에 따라 다르며, 이 값이 무료를 보장하지 않습니다.
     GEMINI_SEARCH_ENABLED: bool = True
-    AI_TIMEOUT_SECONDS: int = 30
+    AI_TIMEOUT_SECONDS: int = Field(60, ge=1, le=300)
+    # 검색에는 추가 대기가 생길 수 있어 별도 전체 제한을 둡니다. 조각마다 제한을 연장하지 않습니다.
+    AI_SEARCH_TIMEOUT_SECONDS: int = Field(90, ge=1, le=300)
     # AI는 DB를 직접 기억하지 않습니다. 최근 이 개수의 메시지를 요청마다 함께 보내 문맥을 제공합니다.
     MAX_HISTORY_MESSAGES: int = 10
 

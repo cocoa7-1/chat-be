@@ -30,9 +30,20 @@ from app.schemas.chat import (
 )
 from app.api.deps import get_current_user
 from app.services.gemini_service import gemini_service
+from app.core.ai_models import MODEL_CHOICES, THINKING_LEVELS
 
 router = APIRouter(prefix="/chat", tags=["Chat & Sessions"])
 DB_SAVE_ERROR_DETAIL = "대화를 저장하지 못했습니다. 잠시 후 다시 시도해 주세요."
+
+
+@router.get("/models")
+def get_models(current_user: User = Depends(get_current_user)):
+    """로그인 사용자에게 선택 목록과 서버 기본값을 제공합니다. 실제 AI를 호출하거나 키를 노출하지 않습니다."""
+    return {
+        "models": MODEL_CHOICES,
+        "default_model": gemini_service.model_name,
+        "search_enabled": gemini_service.search_enabled,
+    }
 
 
 @router.get("/sessions", response_model=List[ChatSessionResponse])
@@ -160,6 +171,10 @@ async def stream_chat(
     """
     request_id = getattr(request.state, "request_id", "req-unknown")
     user_id = current_user.id
+    # 화면을 거치지 않은 요청도 검사합니다. 잘못된 옵션은 DB 저장·AI 호출 전에 거절합니다.
+    selected_model = payload.model or gemini_service.model_name
+    if payload.thinking_level and payload.thinking_level not in THINKING_LEVELS.get(selected_model, []):
+        raise HTTPException(status_code=422, detail="선택한 모델이 지원하지 않는 추론 수준입니다.")
     admit_chat(request, user_id)
     log_request_received(user_id=user_id, path="/api/v1/chat/stream", request_id=request_id)
 
@@ -260,7 +275,11 @@ async def stream_chat(
                 user_id=user_id,
                 request_id=request_id,
                 history=history_context,
-                current_question=payload.message
+                current_question=payload.message,
+                **({"model_name": payload.model} if payload.model is not None else {}),
+                **({"search_enabled": payload.search_enabled} if payload.search_enabled is not None else {}),
+                **({"temperature": payload.temperature} if payload.temperature is not None else {}),
+                **({"thinking_level": payload.thinking_level} if payload.thinking_level is not None else {})
             ):
                 if not chunk["done"]:
                     # SSE는 문자열 사건을 빈 줄 두 개로 구분합니다. ensure_ascii=False는
