@@ -59,9 +59,20 @@ def log_ai_call_failed(request_id: str, error: str, latency_ms: int = 0) -> None
     logger.error(f"ai_call_failed request_id={request_id} error=\"{error}\" latency_ms={latency_ms}")
 
 
-def log_db_save_success(user_id: str | int, chat_id: str | int, session_id: str | int = "") -> None:
-    logger.info(f"db_save_success user_id={user_id} chat_id={chat_id} session_id={session_id}")
+def log_db_save_success(
+    user_id: str | int, chat_id: str | int = "", session_id: str | int = "",
+    request_id: str = "", entity: str = "message"
+) -> None:
+    logger.info(
+        f"db_save_success user_id={user_id} chat_id={chat_id} session_id={session_id} "
+        f"request_id={request_id} entity={entity}"
+    )
 
 
-def log_db_save_failed(user_id: str | int, error: str) -> None:
-    logger.error(f"db_save_failed user_id={user_id} error=\"{error}\"")
+def log_db_save_failed(
+    user_id: str | int, error: str, request_id: str = "", entity: str = "message"
+) -> None:
+    logger.error(
+        f"db_save_failed user_id={user_id} error=\"{error}\" "
+        f"request_id={request_id} entity={entity}"
+    )

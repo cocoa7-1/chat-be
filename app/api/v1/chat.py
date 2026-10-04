@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import select, desc
+from sqlalchemy.exc import SQLAlchemyError
 from app.core.database import get_db, SessionLocal
 from app.core.logging import (
     log_request_received,
@@ -24,6 +25,7 @@ from app.api.deps import get_current_user
 from app.services.gemini_service import gemini_service
 
 router = APIRouter(prefix="/chat", tags=["Chat & Sessions"])
+DB_SAVE_ERROR_DETAIL = "대화를 저장하지 못했습니다. 잠시 후 다시 시도해 주세요."
 
 
 @router.get("/sessions", response_model=List[ChatSessionResponse])
@@ -43,18 +45,38 @@ def get_sessions(
 @router.post("/sessions", response_model=ChatSessionResponse, status_code=status.HTTP_201_CREATED)
 def create_session(
     session_in: ChatSessionCreate,
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Creates a new chat session."""
-    session = ChatSession(
-        user_id=current_user.id,
-        title=session_in.title or "새 대화"
+    user_id = current_user.id
+    request_id = getattr(request.state, "request_id", "req-unknown")
+    log_request_received(user_id=user_id, path="/api/v1/chat/sessions", request_id=request_id)
+    try:
+        session = ChatSession(user_id=user_id, title=session_in.title or "새 대화")
+        db.add(session)
+        db.flush()
+        # Capture the response before commit expires ORM attributes. A later
+        # refresh failure must not make a committed save look like a rollback.
+        response = ChatSessionResponse(
+            id=session.id, user_id=user_id, title=session.title,
+            created_at=session.created_at, updated_at=session.updated_at,
+            messages=[]
+        )
+        db.commit()
+    except SQLAlchemyError as error:
+        db.rollback()
+        log_db_save_failed(
+            user_id=user_id, error=type(error).__name__,
+            request_id=request_id, entity="session"
+        )
+        raise HTTPException(status_code=500, detail=DB_SAVE_ERROR_DETAIL) from None
+    log_db_save_success(
+        user_id=user_id, session_id=response.id,
+        request_id=request_id, entity="session"
     )
-    db.add(session)
-    db.commit()
-    db.refresh(session)
-    return session
+    return response
 
 
 @router.delete("/sessions/{session_id}", status_code=status.HTTP_200_OK)
@@ -113,52 +135,59 @@ async def stream_chat(
     user_id = current_user.id
     log_request_received(user_id=user_id, path="/api/v1/chat/stream", request_id=request_id)
 
-    # 1. Get or create session
+    # 1. Prepare session, question and context in one transaction. A failed
+    # question save must also roll back a newly created session.
     session_id = payload.session_id
-    if session_id:
+    save_entity = "session"
+    try:
         session = db.scalar(
             select(ChatSession).where(ChatSession.id == session_id, ChatSession.user_id == user_id)
-        )
-        if not session:
+        ) if session_id else None
+        new_session = session is None
+        if new_session:
             session = ChatSession(user_id=user_id, title=payload.message[:30])
             db.add(session)
-            db.commit()
-            db.refresh(session)
+            db.flush()
             session_id = session.id
-    else:
-        # Create a new session with title from first question
-        session = ChatSession(user_id=user_id, title=payload.message[:30])
-        db.add(session)
+
+        # 2. Save the question and update the session together.
+        save_entity = "user_message"
+        user_msg = ChatMessage(
+            session_id=session_id, user_id=user_id, role="user",
+            content=payload.message, status="success"
+        )
+        db.add(user_msg)
+        session.updated_at = datetime.now(timezone.utc)
+        db.flush()
+        user_message_id = user_msg.id
+        session_title = session.title
+
+        # 3. Snapshot history and metadata before commit expires ORM state.
+        past_messages = db.scalars(
+            select(ChatMessage)
+            .where(ChatMessage.session_id == session_id, ChatMessage.id != user_message_id)
+            .order_by(ChatMessage.created_at)
+        ).all()
+        history_context = [{"role": m.role, "content": m.content} for m in past_messages]
         db.commit()
-        db.refresh(session)
-        session_id = session.id
+    except SQLAlchemyError as error:
+        db.rollback()
+        # SQLAlchemy exception text may contain SQL parameters; log only type.
+        log_db_save_failed(
+            user_id=user_id, error=type(error).__name__,
+            request_id=request_id, entity=save_entity
+        )
+        raise HTTPException(status_code=500, detail=DB_SAVE_ERROR_DETAIL) from None
 
-    # 2. Save user message to DB
-    user_msg = ChatMessage(
-        session_id=session_id,
-        user_id=user_id,
-        role="user",
-        content=payload.message,
-        status="success"
+    if new_session:
+        log_db_save_success(
+            user_id=user_id, session_id=session_id,
+            request_id=request_id, entity="session"
+        )
+    log_db_save_success(
+        user_id=user_id, chat_id=user_message_id, session_id=session_id,
+        request_id=request_id, entity="user_message"
     )
-    db.add(user_msg)
-    
-    # Update session updated_at
-    session.updated_at = datetime.now(timezone.utc)
-    db.commit()
-    db.refresh(user_msg)
-
-    # 3. Retrieve conversation history for context (last N messages)
-    past_messages = db.scalars(
-        select(ChatMessage)
-        .where(ChatMessage.session_id == session_id)
-        .order_by(ChatMessage.created_at)
-    ).all()
-
-    history_context = [
-        {"role": m.role, "content": m.content}
-        for m in past_messages[:-1]  # Exclude the current message that was just added
-    ]
 
     # 4. Define SSE Generator
     async def sse_event_stream():
@@ -172,8 +201,8 @@ async def stream_chat(
             # Yield initial metadata event
             init_event = {
                 "session_id": session_id,
-                "session_title": session.title,
-                "user_message_id": user_msg.id,
+                "session_title": session_title,
+                "user_message_id": user_message_id,
                 "request_id": request_id
             }
             yield f"event: meta\ndata: {json.dumps(init_event, ensure_ascii=False)}\n\n"
@@ -207,7 +236,10 @@ async def stream_chat(
             gen_db.commit()
             gen_db.refresh(assistant_msg)
 
-            log_db_save_success(user_id=user_id, chat_id=assistant_msg.id, session_id=session_id)
+            log_db_save_success(
+                user_id=user_id, chat_id=assistant_msg.id, session_id=session_id,
+                request_id=request_id, entity="assistant_message"
+            )
 
             # Yield final completion event
             final_data = {
@@ -221,8 +253,11 @@ async def stream_chat(
 
         except Exception as e:
             gen_db.rollback()
-            log_db_save_failed(user_id=user_id, error=str(e))
-            logger.error(f"Error in SSE stream loop: {e}", exc_info=True)
+            log_db_save_failed(
+                user_id=user_id, error=type(e).__name__,
+                request_id=request_id, entity="assistant_message"
+            )
+            logger.error("Error in SSE stream loop: %s request_id=%s", type(e).__name__, request_id)
             err_data = {
                 "done": True,
                 "error": "SERVER_ERROR",

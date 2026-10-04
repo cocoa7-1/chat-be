@@ -24,17 +24,19 @@
 
 ### 1.2 미션 요구사항 vs 구현 결과 정합성 매트릭스
 
+2026-10-04 근거 기준입니다. 최신 세부 상태는 `mission-checklist.md`를 따릅니다. 아래의 로컬 검증, 사용자 시험, 배포 증빙은 서로 다른 확인 범위입니다.
+
 | 미션 요구 영역 | 미션 명세 세부 요건 | 실제 구현 파일 및 함수 | 정합성 검증 결과 |
 | :--- | :--- | :--- | :---: |
-| **웹 UI & 스트리밍** | 질문 입력, 동일 화면 답변 확인, 실시간 토큰 스트리밍 | `chat-fe/index.html`, `app/api/v1/chat.py` | **100% 충족** (`text/event-stream` SSE) |
-| **사용자 인증 & 보안** | 계정 생성, 로그인, 인증 기반 접근 제어 | `app/core/security.py`, `app/api/deps.py` | **100% 충족** (Bcrypt + JWT Bearer) |
-| **대화 문맥 유지** | 이전 대화 질문/답변 고려한 연속 대화 | `gemini_service._build_context_messages` | **100% 충족** (최근 10개 롤링 윈도우) |
-| **안정성 & 타임아웃** | AI API 타임아웃(30초) 및 실패 시 친절한 에러 안내 | `gemini_service.stream_chat_response` | **100% 충족** (`AI_TIMEOUT`, Mock Fallback) |
-| **구조화된 로깅** | 4대 필수 이벤트(수신, 호출, 완료, 저장) 기록 | `app/core/logging.py`, `app/core/middlewares.py` | **100% 충족** (Request ID 연계 로거) |
-| **대화 로그 영속화** | 질문, 응답, 지연시간(ms), 상태 DB 저장 | `app/models/chat.py`, `ChatMessage` | **100% 충족** (SQLite ORM 매핑) |
-| **로그 검증 도구** | 평가자가 로그를 확인하는 Web UI / CLI / SQL 3종 | `chat-fe/logs.html`, `check_logs.py`, `check_logs.sql` | **100% 충족** (3종 검증 도구 완비) |
-| **외부 네트워크 접속** | 평가 시점에 외부에서 접속 가능한 URL 제공 | `scripts/run_public.py`, Vercel + AWS EC2 배포 | **100% 충족** (Vercel URL & 터널링 도구) |
-| **형상관리 & 협업** | Git Flow 브랜치, PR 이력, 10회 이상 커밋 | `main`, `develop`, `dev/auth`, `dev/log`, `dev/chat` | **100% 충족** (역할별 브랜치 분리) |
+| **웹 UI & 스트리밍** | 질문 입력, 동일 화면 답변 확인, 실시간 토큰 스트리밍 | `chat-fe/index.html`, `app/api/v1/chat.py` | 사용자 답변 확인·개편 UI 격리 검증. 개편 후 운영 실제 질문 회귀는 미실시 |
+| **사용자 인증 & 보안** | 계정 생성, 로그인, 인증 기반 접근 제어 | `app/core/security.py`, `app/api/deps.py` | Bcrypt·JWT 및 로컬 인증/격리 검증 통과 |
+| **대화 문맥 유지** | 이전 대화 질문/답변 고려한 연속 대화 | `gemini_service._build_context_messages` | 최근 10개 구성·사용자 후속 질문 시험 확인 |
+| **안정성 & 타임아웃** | AI API 타임아웃(30초) 및 실패 시 친절한 에러 안내 | `gemini_service.stream_chat_response` | 전체 스트림 제한 로컬 보완·격리 검증, 서버 미반영. SDK 초기화 Mock 전환은 후속 |
+| **구조화된 로깅** | 4대 필수 이벤트(수신, 호출, 완료, 저장) 기록 | `app/core/logging.py`, `app/core/middlewares.py` | 초기 DB 성공/실패·request_id 이벤트 로컬 보완·격리 검증, 서버 미반영 |
+| **대화 로그 영속화** | 질문, 응답, 지연시간(ms), 상태 DB 저장 | `app/models/chat.py`, `ChatMessage` | 로컬 DB 검증·사용자 로그 재조회 확인. 서버 재시작 보존 증빙은 별도 |
+| **로그 검증 도구** | 평가자가 로그를 확인하는 Web UI / CLI / SQL 3종 | `chat-fe/logs.html`, `check_logs.py`, `check_logs.sql` | API/UI/CLI/SQL 제공 및 로컬 검증 |
+| **외부 네트워크 접속** | 평가 시점에 외부에서 접속 가능한 URL 제공 | Vercel + AWS EC2 배포 | 배포·접속 확인 이력 존재. 평가 시점 접근성은 재확인 필요 |
+| **형상관리 & 협업** | Git Flow 브랜치, PR 이력, 10회 이상 커밋 | `main`, `develop`, `dev/auth`, `dev/log`, `dev/chat` | 브랜치·PR 병합 이력 존재. 전원 유의미한 10커밋·AI 담당자 요약 미확정 |
 
 ---
 

@@ -6,7 +6,8 @@ from app.core.config import get_settings
 from app.core.logging import (
     log_ai_call_start,
     log_ai_call_success,
-    log_ai_call_failed
+    log_ai_call_failed,
+    logger
 )
 
 settings = get_settings()
@@ -87,24 +88,49 @@ class GeminiService:
                         "temperature": 0.7,
                     }
 
-                # Start streaming with timeout protection on initial connection
-                response_stream = await asyncio.wait_for(
-                    self._client.aio.models.generate_content_stream(
-                        model=self.model_name,
-                        contents=contents,
-                        config=config
-                    ),
-                    timeout=self.timeout_seconds
-                )
-
-                async for chunk in response_stream:
-                    if chunk.text:
-                        full_response += chunk.text
-                        yield {
-                            "text": chunk.text,
-                            "done": False,
-                            "error": None
-                        }
+                # One deadline covers connection and every read, even if tokens
+                # keep arriving. Do not keep a timeout context open across yield:
+                # that would also cancel the caller while it handles SSE data.
+                loop = asyncio.get_running_loop()
+                deadline = loop.time() + self.timeout_seconds
+                response_stream = None
+                try:
+                    response_stream = await asyncio.wait_for(
+                        self._client.aio.models.generate_content_stream(
+                            model=self.model_name,
+                            contents=contents,
+                            config=config
+                        ),
+                        timeout=self.timeout_seconds
+                    )
+                    iterator = aiter(response_stream)
+                    while True:
+                        remaining = deadline - loop.time()
+                        if remaining <= 0:
+                            raise asyncio.TimeoutError
+                        try:
+                            chunk = await asyncio.wait_for(anext(iterator), timeout=remaining)
+                        except StopAsyncIteration:
+                            break
+                        if chunk.text:
+                            full_response += chunk.text
+                            yield {
+                                "text": chunk.text,
+                                "done": False,
+                                "error": None
+                            }
+                finally:
+                    close = getattr(response_stream, "aclose", None)
+                    if close is not None:
+                        try:
+                            await asyncio.wait_for(close(), timeout=1.0)
+                        except Exception as close_error:
+                            # Cleanup must not replace the AI result or expose
+                            # SDK exception text. Cancellation still propagates.
+                            logger.warning(
+                                "ai_stream_close_failed request_id=%s error_type=%s",
+                                request_id, type(close_error).__name__
+                            )
 
                 latency_ms = int((time.perf_counter() - start_time) * 1000)
                 log_ai_call_success(request_id=request_id, latency_ms=latency_ms)

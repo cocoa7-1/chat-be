@@ -8,7 +8,7 @@
 - 프론트 Production: https://b7-1-chat-fe.vercel.app
 - 백엔드 HTTPS / API 문서: https://b71chatbe.ddns.net / https://b71chatbe.ddns.net/docs
 - 배포 연결 상태: 2026-10-04 Codex가 공개 FE 파일·BE healthy/production·실제 FE Origin CORS 응답 확인. 사용자가 배포 브라우저에서 가입·로그인·Demo 질문·로그 재조회 후, 서버에 AI 키를 직접 설정하고 실제 AI 답변·연속 질문 문맥·질문/답변 로그를 확인했습니다. 사용자 시험 결과와 Codex 직접 HTTP 검증은 구분합니다.
-- 기능 기준: `develop`의 `4ce07e4`. [PR #8](https://github.com/cocoa7-1/chat-be/pull/8)이 main에 병합된 뒤에는 해당 main 커밋을 배포 기준으로 선택할 수 있습니다.
+- 배포 기능 기준: `4ce07e4`. 전체 AI 스트림 타임아웃과 초기 DB 저장 처리는 `dev/log-mission-docs`에서 보완했으며 [PR #10](https://github.com/cocoa7-1/chat-be/pull/10)에서 리뷰합니다. 서버 반영은 별도 단계입니다. 2026-10-04 GitHub 확인 당시 PR #10은 open, 대상 develop, 리뷰 요청자 dolphin1404였습니다.
 
 ## 핵심 시나리오와 구조
 
@@ -53,7 +53,7 @@ Windows PowerShell의 파일 복사는 `Copy-Item .env.example .env`를 사용�
 | `DATABASE_URL` | 로컬 `sqlite:///./chatbot.db`, 배포는 보존할 파일의 절대 경로 권장 |
 | `GEMINI_API_KEY` | 서버 전용 AI API 키. 빈 값이면 Mock |
 | `GEMINI_MODEL_NAME` | AI 모델 ID, 기본 `gemma-4-26b-a4b-it` |
-| `AI_TIMEOUT_SECONDS` | 현재 AI 스트림 초기 연결 제한, `30`초. 응답 스트림 전체 제한은 보완 필요 |
+| `AI_TIMEOUT_SECONDS` | 연결 시작부터 응답 스트림 완료까지 공유하는 전체 제한, 기본 `30`초. SDK 스트림 정리는 별도로 최대 1초 |
 | `MAX_HISTORY_MESSAGES` | 실제 AI에 전달할 최근 메시지 수, `10`개 (질문·답변 각각 한 메시지) |
 | `SYSTEM_INSTRUCTION` | 선택: 건설 도메인 시스템 지시문 재정의. 생략 시 코드 기본값 사용 |
 
@@ -132,7 +132,15 @@ event: done
 data: {"done":true,"message_id":2,"latency_ms":1200,"status":"success","error":null}
 ```
 
-질문은 공백만 입력할 수 없고 최대 2,000자입니다. 비로그인은 401입니다. 스트림 시작 후 AI 오류가 생기면 HTTP 상태는 이미 200일 수 있으므로 답변의 오류 안내와 완료 이벤트의 `error`를 확인합니다. 초기 연결 타임아웃은 `AI_TIMEOUT`, 기타 AI 오류는 `AI_SERVICE_ERROR`, 스트림 내부 서버 오류는 `event: error`로 안내합니다.
+질문은 공백만 입력할 수 없고 최대 2,000자입니다. 비로그인은 401입니다. 스트림 시작 후 AI 오류가 생기면 HTTP 상태는 이미 200일 수 있으므로 답변의 오류 안내와 완료 이벤트의 `error`를 확인합니다. 연결 또는 응답 읽기가 전체 제한을 넘으면 `AI_TIMEOUT`, 기타 AI 오류는 `AI_SERVICE_ERROR`, 스트림 내부 서버 오류는 `event: error`로 안내합니다. 타임아웃 전 받은 답변 일부와 오류 안내도 `status=error`, `error_message=AI_TIMEOUT`으로 저장됩니다.
+
+스트림 이전 세션·질문 저장 또는 명시적 세션 생성이 실패하면 SSE를 시작하지 않고 HTTP 500과 아래 JSON을 반환합니다. 자동 생성 세션과 질문은 한 트랜잭션으로 저장하므로 질문 저장 실패 시 새 세션도 되돌립니다.
+
+```json
+{"detail":"대화를 저장하지 못했습니다. 잠시 후 다시 시도해 주세요."}
+```
+
+세션·사용자 질문은 AI 호출 전에 저장을 완료합니다. AI 오류나 타임아웃은 이미 저장한 질문을 되돌리지 않습니다. AI 답변 또는 오류 안내는 이후 별도 저장 단계이며, 답변 저장 자체가 실패해도 앞서 저장한 질문은 남습니다. 초기 DB 저장 자체가 실패한 질문은 저장된 것으로 처리하지 않고 위 오류 안내를 반환합니다.
 
 ### 사용자 기준 로그 조회
 
@@ -161,7 +169,7 @@ users (1) ── (N) chat_sessions (1) ── (N) chat_messages
 
 평가자는 로그인한 프론트의 `logs.html`, 로그 API, 레포 루트의 `uv run python scripts/check_logs.py`, 또는 `scripts/check_logs.sql` 중 편한 방법으로 확인할 수 있습니다.
 
-콘솔과 `logs/server.log`에 `request_received`, `ai_call_start`, `ai_call_success` / `ai_call_failed`, `db_save_success` / `db_save_failed` 이벤트가 정의되어 있습니다. 답변 저장에는 DB 이벤트가 있지만 스트림 이전의 세션·질문 저장 실패 처리는 보완이 필요합니다.
+콘솔과 `logs/server.log`에 `request_received`, `ai_call_start`, `ai_call_success` / `ai_call_failed`, `db_save_success` / `db_save_failed` 이벤트가 남습니다. 세션·질문·답변 저장 이벤트는 `request_id`와 `entity=session|user_message|assistant_message`로 구분합니다. 초기 저장은 커밋 후에만 성공 이벤트를 기록하고 실패 시 rollback·실패 이벤트·JSON 500 안내를 반환합니다. DB 실패 로그에는 SQL·파라미터 대신 예외 종류만 기록합니다. SDK 초기화 실패가 조용히 Mock로 전환되는 기존 경로는 별도 후속 보완점입니다.
 
 ## 배포와 협업
 
@@ -189,7 +197,7 @@ users (1) ── (N) chat_sessions (1) ── (N) chat_messages
 | 인증 / Git 작성자 `bwmin` | 닉네임 모델·스키마, 비밀번호 정책·변경 API, 검증 오류 처리·테스트. dev/auth에 미병합 추가 작업 있음 | [Auth](docs/roles/auth_guide.md) |
 | DB·로그 / `feelosophysics` (Git 작성자 alzznd) | 로그 페이지네이션·통계·CLI·SQL·DB 테스트, 도메인 문서·프롬프트, 이번 README 보완 | [Log/DB](docs/roles/log_db_guide.md) |
 | AI 최종 담당자 | 담당자 확인·개인별 요약 추가 필요. 기존 구현은 존재 | [Chat](docs/roles/chat_api_guide.md) |
-| 프론트 / 별도 담당자 없음 (사용자 설명) | DB·로그 담당자의 요청으로 FE log 작업 브랜치에서 가입·API 주소 연동 수정. 현재 로컬 미커밋 상태 | [프론트 저장소](https://github.com/cocoa7-1/chat-fe) |
+| 프론트 / 별도 담당자 없음 (사용자 설명) | DB·로그 담당자의 요청으로 가입·API 주소 연동 및 현장노트 UI 개편. `dev/log-frontend-integration`의 `ea431c8`까지 커밋·푸시·배포 완료 | [프론트 저장소](https://github.com/cocoa7-1/chat-fe) |
 
 팀원별 유의미한 커밋 10회 이상은 모든 팀원에 대해 아직 충족됐다고 확인할 수 없습니다. [미션 점검표](docs/mission-checklist.md)에 확인 범위와 남은 항목을 기록했습니다. 실제 작업·검증·문서화 이력을 남기며 빈 커밋으로 수를 채우지 않습니다.
 
