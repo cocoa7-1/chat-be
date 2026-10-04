@@ -1,139 +1,211 @@
-# 🏗️ 건설 도메인 지식 & 상식 Q&A 챗봇 - 백엔드 API (`chat-be`)
+# 건설 도메인 지식·상식 Q&A 챗봇 — chat-be
 
-FastAPI 기반의 실시간 스트리밍 건설 도메인 지식 & 상식 Q&A 챗봇 백엔드 서비스입니다. 시공/공정, 인허가 절차, 계약/비용, 참여주체, 자재/구조, 헷갈리는 개념(리모델링 vs 재건축), 플랜트 건설 등 7대 핵심 카테고리 29개 용어 및 5대 FAQ에 특화되어 있습니다. Google AI Studio Gemma 4 26B API 연동, Server-Sent Events (SSE) 실시간 토큰 스트리밍, SQLite DB 대화 로그 영속화, JWT 기반 사용자 인증, 구조화된 4대 로깅 시스템 및 Vercel/AWS EC2 배포 파이프라인을 지원합니다.
+건설 용어와 절차가 익숙하지 않은 사용자가 회원가입·로그인 후 질문하고, AI 답변과 이전 대화를 확인하는 웹 챗봇의 FastAPI 백엔드입니다. 시공·공정, 인허가, 계약·비용, 참여 주체, 자재·구조, 개념 비교, 플랜트 분야를 다룹니다. 학습용 정보 제공을 목표로 하며 현장 판단을 대체하지 않습니다.
 
----
+- 백엔드: https://github.com/cocoa7-1/chat-be
+- 프론트엔드: https://github.com/cocoa7-1/chat-fe
+- 배포 목표: 정적 프론트 Vercel + 백엔드 AWS EC2 한 대 + SQLite
+- 프론트 Production: https://b7-1-chat-fe.vercel.app
+- 백엔드 HTTPS / API 문서: https://b71chatbe.ddns.net / https://b71chatbe.ddns.net/docs
+- 배포 연결 상태: 2026-10-04 Codex가 공개 FE 파일·BE healthy/production·실제 FE Origin CORS 응답 확인. 사용자가 배포 브라우저에서 가입·로그인·Demo 질문·로그 재조회 후, 서버에 AI 키를 직접 설정하고 실제 AI 답변·연속 질문 문맥·질문/답변 로그를 확인했습니다. 사용자 시험 결과와 Codex 직접 HTTP 검증은 구분합니다.
+- 배포 기능 기준: `4ce07e4`. 전체 AI 스트림 타임아웃과 초기 DB 저장 처리는 `dev/log-mission-docs`에서 보완했으며 [PR #10](https://github.com/cocoa7-1/chat-be/pull/10)에서 리뷰합니다. 서버 반영은 별도 단계입니다. 2026-10-04 GitHub 확인 당시 PR #10은 open, 대상 develop, 리뷰 요청자 dolphin1404였습니다.
 
-## 👥 4인 팀 역할 분담 및 브랜치 가이드
+## 핵심 시나리오와 구조
 
-본 레포지토리는 4인 팀 협업과 미션 요구사항 충족을 위해 명확하게 역할과 브랜치가 분리되어 있습니다:
+회원가입 → 로그인·JWT 발급 → 질문 입력 → 사용자·세션 확인 → 질문 DB 저장 → 최근 대화와 현재 질문을 AI에 전달 → SSE 답변 전송 → 답변 DB 저장 → 내 대화·로그 조회 흐름입니다.
 
-| 역할 (Role) | 브랜치 | 주요 담당 모듈 | 상세 가이드 문서 |
-| :--- | :--- | :--- | :--- |
-| 👑 **감독 & 인프라 (Director)** | `main` / `develop` | 아키텍처 검토, PR 리뷰, 브랜치 관리, AWS EC2 배포 | [📖 ADR 의사결정록](docs/decision_log.md) |
-| 🛡️ **Role 1: 인증 & 보안 (Auth)** | `dev/auth` | `app/api/v1/auth.py`, `app/core/security.py`, `app/models/user.py` | [📖 Auth 가이드](docs/roles/auth_guide.md) |
-| 💾 **Role 2: 데이터 & 로깅 (Log/DB)** <br>*(내 담당)* | `dev/log` | `app/api/v1/logs.py`, `app/core/database.py`, `app/models/chat.py` | [📖 Log/DB 가이드](docs/roles/log_db_guide.md) |
-| 🤖 **Role 3: AI 파이프라인 (Chat)** | `dev/chat` | `app/api/v1/chat.py`, `app/services/gemini_service.py` | [📖 Chat 가이드](docs/roles/chat_api_guide.md) |
-
----
-
-## 📁 디렉토리 구조
 ```text
-chat-be/
-├── app/
-│   ├── api/
-│   │   ├── deps.py              # 인증 의존성 주입 (get_current_user)
-│   │   └── v1/
-│   │       ├── auth.py          # [Role 1] 회원가입, 로그인, JWT 발급
-│   │       ├── chat.py          # [Role 3] SSE 실시간 스트리밍, 세션 CRUD
-│   │       └── logs.py          # [Role 2] 대화 로그 조회 및 통계
-│   ├── core/
-│   │   ├── config.py            # Pydantic 기반 환경변수 설정
-│   │   ├── database.py          # SQLAlchemy SQLite 엔진 & 세션 관리
-│   │   ├── logging.py           # 구조화된 로깅 시스템
-│   │   ├── middlewares.py       # Request ID 발급 및 상관관계 추적 미들웨어
-│   │   └── security.py          # Bcrypt 비밀번호 해싱 & JWT 생성/검증
-│   ├── models/
-│   │   ├── user.py              # User DB 모델
-│   │   └── chat.py              # ChatSession, ChatMessage DB 모델
-│   ├── schemas/
-│   │   ├── auth.py              # 인증 Pydantic DTO
-│   │   └── chat.py              # 채팅/세션 Pydantic DTO
-│   ├── services/
-│   │   └── gemini_service.py    # Google Gemini API 연동 & 컨텍스트 주입 & Mock 모드
-│   └── main.py                  # FastAPI 앱 진입점 및 CORS 설정
-├── docs/
-│   ├── roles/                   # 팀원별 파트 상세 가이드 문서
-│   │   ├── auth_guide.md
-│   │   ├── log_db_guide.md
-│   │   └── chat_api_guide.md
-│   ├── decision_log.md          # 아키텍처 의사결정 기록 (ADR)
-│   └── deep_dive_study_guide.md # 심층 엔지니어링 학습 가이드
-├── scripts/
-│   ├── check_logs.py            # 터미널용 DB 로그 검증 CLI 스크립트
-│   ├── check_logs.sql           # SQLite 직접 쿼리용 SQL 파일
-│   ├── test_api.py              # 자동 API 엔드포인트 검증 스크립트
-│   └── run_public.py            # 외부 평가용 원클릭 터널링 스크립트
-├── tests/                       # Pytest 단위/통합 테스트 스위트
-│   ├── test_auth.py
-│   ├── test_chat.py
-│   └── test_db.py
-├── requirements.txt             # Python 패키지 의존성 목록
-├── .env.example                 # 환경변수 템플릿
-├── pytest.ini                   # Pytest 설정
-└── README.md
+브라우저 ── HTTPS ── Vercel (chat-fe: HTML/CSS/JS)
+    └────── HTTPS ── EC2 / Caddy ── FastAPI / Uvicorn
+                                      ├─ SQLite
+                                      └─ Google AI API (키는 서버에만 보관)
 ```
 
----
+Python 3.12, FastAPI, SQLAlchemy, SQLite, Google GenAI SDK를 사용합니다. 비밀번호는 bcrypt 해시로 저장하고 JWT를 발급합니다. 프론트는 `Authorization: Bearer` 헤더를 전송하며 백엔드는 HttpOnly 쿠키 인증도 지원합니다.
 
-## ⚡ 빠른 시작 (Getting Started)
+AI 키가 없거나 SDK 클라이언트 초기화가 실패하면 **Mock 응답**으로 동작합니다. Mock는 연결 시험용이며 실제 AI 호출·대화 문맥 유지 검증을 대신하지 않습니다. 실제 AI에는 최근 `MAX_HISTORY_MESSAGES`개 메시지를 전달합니다. 현재 설정 모델은 `gemma-4-26b-a4b-it`이며 해당 Google 프로젝트의 모델 접근·무료 할당량을 확인해야 합니다.
 
-### 1. 가상환경 생성 및 패키지 설치 (`uv`)
+## 로컬 실행과 환경 변수
+
+레포 루트에서 실행합니다. 아래는 `uv` 설치 환경 기준입니다.
+
 ```bash
-# uv 기반 가상환경 생성 및 초고속 의존성 설치
-uv venv
+uv venv --python 3.12
 uv pip install -r requirements.txt
-```
-
-### 2. 환경변수 설정
-`.env.example` 파일을 복사하여 `.env` 파일을 생성합니다:
-```bash
+# Linux / macOS
 cp .env.example .env
 ```
 
-`.env` 파일 내용:
-```ini
-APP_ENV=development
-APP_NAME=AI Learning Tutor Backend
-DEBUG=true
-HOST=0.0.0.0
-PORT=8000
+Windows PowerShell의 파일 복사는 `Copy-Item .env.example .env`를 사용합니다.
 
-# SQLite 데이터베이스
-DATABASE_URL=sqlite:///./chatbot.db
+실제 읽는 이름은 **`SECRET_KEY`, `ALGORITHM`**입니다. `JWT_SECRET_KEY`, `JWT_ALGORITHM`은 이 코드에서 읽지 않습니다. 설정에 없는 이름은 무시되므로 정확한 이름을 사용합니다.
 
-# JWT 보안 설정
-JWT_SECRET_KEY=dev_secret_key_change_in_production_1234567890
-JWT_ALGORITHM=HS256
-ACCESS_TOKEN_EXPIRE_MINUTES=1440
+| 환경 변수 | 용도 / 기본값 |
+|---|---|
+| `APP_NAME` | 서비스 표시 이름 |
+| `APP_ENV` | 로컬 `development`, 배포 `production` |
+| `DEBUG` | 로컬 true, 배포 false. 다른 보안 설정을 자동 변경하지 않음 |
+| `HOST`, `PORT` | `python -m app.main`의 주소·포트. Uvicorn CLI 실행은 CLI 옵션으로 지정 |
+| `SECRET_KEY` | JWT 서명 키. 개발용 예제 값을 실제 배포에 사용하지 않음 |
+| `ALGORITHM` | JWT 알고리즘, `HS256` |
+| `ACCESS_TOKEN_EXPIRE_MINUTES` | 토큰 유효 시간, `1440`분 |
+| `COOKIE_NAME` | 인증 쿠키 이름, `access_token` |
+| `DATABASE_URL` | 로컬 `sqlite:///./chatbot.db`, 배포는 보존할 파일의 절대 경로 권장 |
+| `GEMINI_API_KEY` | 서버 전용 AI API 키. 빈 값이면 Mock |
+| `GEMINI_MODEL_NAME` | AI 모델 ID, 기본 `gemma-4-26b-a4b-it` |
+| `AI_TIMEOUT_SECONDS` | 연결 시작부터 응답 스트림 완료까지 공유하는 전체 제한, 기본 `30`초. SDK 스트림 정리는 별도로 최대 1초 |
+| `MAX_HISTORY_MESSAGES` | 실제 AI에 전달할 최근 메시지 수, `10`개 (질문·답변 각각 한 메시지) |
+| `SYSTEM_INSTRUCTION` | 선택: 건설 도메인 시스템 지시문 재정의. 생략 시 코드 기본값 사용 |
 
-# Google Gemini API 설정 (미입력 시 스마트 Demo Mock 모드로 동작)
-GEMINI_API_KEY=
-GEMINI_MODEL_NAME=gemini-2.5-flash
-AI_TIMEOUT_SECONDS=10
-```
-
-### 3. 서버 실행 (`uv run`)
-```bash
-# 가상환경 수동 활성화 없이 바로 실행
-uv run uvicorn app.main:app --reload --port 8000
-```
-- Swagger UI (API 문서): `http://localhost:8000/docs`
-- ReDoc: `http://localhost:8000/redoc`
-
----
-
-## 🧪 테스트 및 품질 검증
+키 생성 예시: `uv run python -c 'import secrets; print(secrets.token_hex(32))'`. 생성한 값은 `.env`의 `SECRET_KEY`에만 넣습니다. `.env`, DB, 로그는 `.gitignore`에 포함됩니다. AI 키·JWT 키·로그인 토큰을 프론트 JS나 Git에 넣지 않습니다.
 
 ```bash
-# 전체 단위 테스트 실행 (uv run)
+uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
+```
+
+- 상태 확인: http://localhost:8000/
+- API 명세·요청 실행: http://localhost:8000/docs
+- ReDoc: http://localhost:8000/redoc
+
+프론트 레포는 `python -m http.server 3000`으로 실행하고 http://localhost:3000/ 에 접속합니다. 로컬 API 주소는 `http://localhost:8000`입니다. FE `dev/log-frontend-integration`에서 nickname 입력·전송과 배포 API 주소 분리를 수정했습니다. 배포에는 해당 수정이 반영된 브랜치를 사용하고 `js/config.js`의 `DEPLOYED_API_BASE_URL`에 실제 백엔드 HTTPS 주소를 입력합니다. [미션 점검표](docs/mission-checklist.md)를 참고하세요.
+
+## API 명세
+
+인증 요청은 `Authorization: Bearer <로그인 응답의 access_token>`을 전송합니다. 아래는 전체 경로이며 상세 필드 정의는 `/docs`에서 확인합니다.
+
+| 메서드 | 경로 | 인증 | 기능 |
+|---|---|---|---|
+| GET | `/` | 불필요 | 서버 상태 |
+| POST | `/api/v1/auth/register` | 불필요 | 회원가입 |
+| POST | `/api/v1/auth/login` | 불필요 | 로그인·토큰 발급 |
+| POST | `/api/v1/auth/logout` | 불필요 | 인증 쿠키 삭제. 프론트 토큰은 프론트에서 삭제 |
+| GET | `/api/v1/auth/me` | 필요 | 현재 사용자 |
+| PUT | `/api/v1/auth/password` | 필요 | 비밀번호 변경 |
+| GET / POST | `/api/v1/chat/sessions` | 필요 | 내 세션 목록 / 세션 생성 |
+| DELETE | `/api/v1/chat/sessions/{session_id}` | 필요 | 내 세션·메시지 삭제 |
+| GET | `/api/v1/chat/sessions/{session_id}/messages` | 필요 | 내 세션 메시지 조회 |
+| POST | `/api/v1/chat/stream` | 필요 | 질문·SSE 답변 |
+| GET | `/api/v1/logs` | 필요 | 내 로그·페이지네이션 |
+| GET | `/api/v1/logs/stats` | 필요 | 내 질문·답변·지연시간 통계 |
+
+### 회원가입과 로그인
+
+`POST /api/v1/auth/register` 요청:
+
+```json
+{"username":"demo_user","nickname":"학습자","password":"examplePassword123!"}
+```
+
+HTTP 201 응답 예시:
+
+```json
+{"id":1,"username":"demo_user","nickname":"학습자","is_active":true,"is_admin":false,"created_at":"2026-10-04T00:00:00"}
+```
+
+`POST /api/v1/auth/login` 요청:
+
+```json
+{"username":"demo_user","password":"examplePassword123!"}
+```
+
+HTTP 200으로 `access_token`, `token_type: "bearer"`, `user`를 반환합니다. 실제 토큰은 문서에 저장하지 않습니다. 가입은 닉네임 필수·비밀번호 8자 이상입니다. 중복 아이디는 400, 로그인 실패는 401, 입력 검증 실패는 422입니다.
+
+### 질문과 SSE 응답
+
+`POST /api/v1/chat/stream` 요청 (`session_id` 생략 시 새 세션 생성):
+
+```json
+{"message":"감리와 감독의 차이를 설명해 줘.","session_id":1}
+```
+
+응답은 JSON 한 개가 아닌 `text/event-stream`입니다:
+
+```text
+event: meta
+data: {"session_id":1,"session_title":"건설 질문","user_message_id":1,"request_id":"example"}
+
+data: {"text":"감리는 "}
+
+data: {"text":"..."}
+
+event: done
+data: {"done":true,"message_id":2,"latency_ms":1200,"status":"success","error":null}
+```
+
+질문은 공백만 입력할 수 없고 최대 2,000자입니다. 비로그인은 401입니다. 스트림 시작 후 AI 오류가 생기면 HTTP 상태는 이미 200일 수 있으므로 답변의 오류 안내와 완료 이벤트의 `error`를 확인합니다. 연결 또는 응답 읽기가 전체 제한을 넘으면 `AI_TIMEOUT`, 기타 AI 오류는 `AI_SERVICE_ERROR`, 스트림 내부 서버 오류는 `event: error`로 안내합니다. 타임아웃 전 받은 답변 일부와 오류 안내도 `status=error`, `error_message=AI_TIMEOUT`으로 저장됩니다.
+
+스트림 이전 세션·질문 저장 또는 명시적 세션 생성이 실패하면 SSE를 시작하지 않고 HTTP 500과 아래 JSON을 반환합니다. 자동 생성 세션과 질문은 한 트랜잭션으로 저장하므로 질문 저장 실패 시 새 세션도 되돌립니다.
+
+```json
+{"detail":"대화를 저장하지 못했습니다. 잠시 후 다시 시도해 주세요."}
+```
+
+세션·사용자 질문은 AI 호출 전에 저장을 완료합니다. AI 오류나 타임아웃은 이미 저장한 질문을 되돌리지 않습니다. AI 답변 또는 오류 안내는 이후 별도 저장 단계이며, 답변 저장 자체가 실패해도 앞서 저장한 질문은 남습니다. 초기 DB 저장 자체가 실패한 질문은 저장된 것으로 처리하지 않고 위 오류 안내를 반환합니다.
+
+### 사용자 기준 로그 조회
+
+`GET /api/v1/logs?limit=10&offset=0&session_id=1` 응답 예시:
+
+```json
+{"total":2,"items":[{"id":2,"user_id":1,"username":"demo_user","session_id":1,"role":"assistant","content":"감리는 ...","latency_ms":1200,"status":"success","error_message":null,"created_at":"2026-10-04T00:00:01"}]}
+```
+
+필드 설명용 축약 예시입니다. `total`은 필터의 전체 메시지 수이며 질문·답변은 각각 한 행입니다. 일반 사용자는 자신의 로그만 보고, 관리자(`is_admin`)만 다른 사용자 `user_id`로 필터링할 수 있습니다. 가입 시 관리자가 되지 않으며 별도 관리자 UI는 없습니다. `limit` 1~200, `offset` 0 이상, `status` 필터를 지원합니다. 현재 AI 타임아웃도 DB status는 `error`이며 세부 사유는 `error_message`입니다.
+
+## DB 구조와 검증 방법
+
+```text
+users (1) ── (N) chat_sessions (1) ── (N) chat_messages
+  └────────────────────────────── (N) chat_messages
+```
+
+| 테이블 | 필드 |
+|---|---|
+| `users` | `id` PK, `username` unique, `nickname`, `password_hash`, `is_active`, `is_admin`, `created_at` |
+| `chat_sessions` | `id` PK, `user_id` FK, `title`, `created_at`, `updated_at` |
+| `chat_messages` | `id` PK, `session_id` FK, `user_id` FK, `role`, `content`, `latency_ms`, `status`, `error_message`, `created_at` |
+
+메시지의 `role`은 `user` / `assistant` 구분입니다. 현재 develop에는 회원의 현장 직책 필드가 없습니다. 서버 시작 시 테이블이 생성되지만 `create_all()`은 기존 컬럼을 변경하지 않으므로 모델 변경 때 배포 DB 반영 방법도 확인합니다.
+
+평가자는 로그인한 프론트의 `logs.html`, 로그 API, 레포 루트의 `uv run python scripts/check_logs.py`, 또는 `scripts/check_logs.sql` 중 편한 방법으로 확인할 수 있습니다.
+
+콘솔과 `logs/server.log`에 `request_received`, `ai_call_start`, `ai_call_success` / `ai_call_failed`, `db_save_success` / `db_save_failed` 이벤트가 남습니다. 세션·질문·답변 저장 이벤트는 `request_id`와 `entity=session|user_message|assistant_message`로 구분합니다. 초기 저장은 커밋 후에만 성공 이벤트를 기록하고 실패 시 rollback·실패 이벤트·JSON 500 안내를 반환합니다. DB 실패 로그에는 SQL·파라미터 대신 예외 종류만 기록합니다. SDK 초기화 실패가 조용히 Mock로 전환되는 기존 경로는 별도 후속 보완점입니다.
+
+## 배포와 협업
+
+서버 실행·환경 변수·HTTPS·systemd는 [최소 배포 가이드](docs/deployment.md)를 따릅니다. Vercel에는 정적 프론트만, EC2에는 백엔드와 SQLite를 둡니다. RDS·Docker·로드 밸런서·자동 배포는 필수 조건이 아닙니다.
+
+배포 브랜치는 선택할 수 있습니다. 팀의 안정 배포 기준은 main으로 두되 PR #8 병합 전 최신 기능은 develop에 있습니다. **승인과 병합은 다른 상태**입니다. main 배포 시 포함된 커밋을 확인하고 BE/FE 각각의 배포 브랜치를 기록합니다.
+
+| 배포 확인 항목 | 현재 상태 |
+|---|---|
+| 프론트 Production URL / 백엔드 HTTPS URL | https://b7-1-chat-fe.vercel.app / https://b71chatbe.ddns.net. Codex HTTP 확인 |
+| BE 배포 브랜치와 커밋 | 서버 로컬 `dev/log-ec2-deploy`, `4ce07e4971f32702c69e514807c1577c6517ad2c` — Aside 보고 |
+| FE 배포 브랜치와 커밋 | `dev/log-frontend-integration`, `6fd410e458a2234a7d1d5c459f24f2f4bacfeac9` — Aside 배포 보고, Codex 공개 파일 내용 일치 확인 |
+| 배포 브라우저 가입·로그인·Demo 질문·로그 조회 | 2026-10-04 사용자 직접 시험 성공, 새로고침 후 기록 재조회 확인 |
+| 실제 AI 질문·문맥·DB 저장 확인일 | 2026-10-04 사용자 직접 키 입력·서버 재시작 후 실제 답변과 같은 대화의 후속 표 정리·로그 화면 확인. Codex의 Google 사용량 조회는 미실시 |
+
+팀 합의는 개인 작업 브랜치 → `develop` 대상 PR → 리뷰 흐름입니다. 리뷰어는 감독 `dolphin1404`를 지정하며 `develop → main` 병합은 감독이 수행합니다. 이번 문서 보완은 `dev/log-mission-docs`에서 작업하고 main/develop을 직접 변경하지 않습니다.
+
+### 팀 구성과 개인별 작업 요약
+
+아래는 Git 이력과 사용자 설명으로 확인 가능한 내용입니다. 미확인 담당자를 실제 기여자로 만들어 쓰지 않습니다.
+
+| 역할 / 확인된 작성자 | 작업 요약 | 상세 문서 |
+|---|---|---|
+| 감독·인프라 / `dolphin1404` (Git 작성자 Kyumin Lee) | PR 템플릿, develop → main 통합 PR #8. 배포 실행은 미확인 | [의사결정록](docs/decision_log.md) |
+| 인증 / Git 작성자 `bwmin` | 닉네임 모델·스키마, 비밀번호 정책·변경 API, 검증 오류 처리·테스트. dev/auth에 미병합 추가 작업 있음 | [Auth](docs/roles/auth_guide.md) |
+| DB·로그 / `feelosophysics` (Git 작성자 alzznd) | 로그 페이지네이션·통계·CLI·SQL·DB 테스트, 도메인 문서·프롬프트, 이번 README 보완 | [Log/DB](docs/roles/log_db_guide.md) |
+| AI 최종 담당자 | 담당자 확인·개인별 요약 추가 필요. 기존 구현은 존재 | [Chat](docs/roles/chat_api_guide.md) |
+| 프론트 / 별도 담당자 없음 (사용자 설명) | DB·로그 담당자의 요청으로 가입·API 주소 연동 및 현장노트 UI 개편. `dev/log-frontend-integration`의 `ea431c8`까지 커밋·푸시·배포 완료 | [프론트 저장소](https://github.com/cocoa7-1/chat-fe) |
+
+팀원별 유의미한 커밋 10회 이상은 모든 팀원에 대해 아직 충족됐다고 확인할 수 없습니다. [미션 점검표](docs/mission-checklist.md)에 확인 범위와 남은 항목을 기록했습니다. 실제 작업·검증·문서화 이력을 남기며 빈 커밋으로 수를 채우지 않습니다.
+
+## 테스트
+
+```bash
 uv run pytest tests/ -v
-
-# 로그 적재 확인 스크립트 (uv run)
 uv run python scripts/check_logs.py
-
-# API 동작 일괄 테스트 (uv run)
-uv run python scripts/test_api.py
 ```
 
----
-
-## 🤝 Git 브랜치 협업 가이드
-
-1. **`main`**: 안정적인 배포 브랜치
-2. **`develop`**: 개발 통합 브랜치
-3. **`feature/<role>-<feature_name>`**: 개별 작업 브랜치
-   - 예: `feature/auth-password-reset`
-   - 예: `feature/db-pagination`
-   - 예: `feature/chat-system-prompt`
-4. 작업 완료 후 `develop` 브랜치로 Pull Request(PR) 생성 -> 코드 리뷰 후 머지
+테스트는 데이터를 생성하므로 운영 DB·실제 AI 키를 사용하지 않고 별도 테스트 환경에서 실행합니다. `scripts/test_api.py`는 배포 서버에 접속하는 검증이 아니라 TestClient로 앱을 확인하는 보조 스크립트입니다. Mock 테스트 통과와 실제 AI·외부 배포 검증은 구분합니다.
