@@ -38,6 +38,7 @@ PowerShell의 파일 복사는 `Copy-Item .env.example .env`입니다. 프론트
 |---|---|
 | APP_NAME | 서비스 이름 |
 | APP_ENV / DEBUG | development / true. 운영은 production / false |
+| CORS_ALLOWED_ORIGINS | 허용 Origin JSON 배열. 운영은 ["https://b7-1-chat-fe.vercel.app"], 로컬은 .env.example 참고 |
 | HOST / PORT | 개발 실행 바인딩, 0.0.0.0 / 8000 |
 | SECRET_KEY / ALGORITHM | JWT 서명 키 / HS256. 운영에는 고유한 랜덤 키 32바이트 이상 필요 |
 | ACCESS_TOKEN_EXPIRE_MINUTES / COOKIE_NAME | 토큰1440분 / access_token |
@@ -154,12 +155,13 @@ DATABASE_URL=sqlite:///./test.db GEMINI_API_KEY="" APP_ENV=test uv run pytest te
 
 | 역할 / 작성자 | 작업 요약 |
 |---|---|
-| 감독 / dolphin1404 (Kyumin Lee) | PR 템플릿, 리뷰와 통합 브랜치 관리 |
-| 인증 / bwmin | 닉네임 모델·스키마, 비밀번호 정책/변경 API, 검증 오류 처리와 테스트 |
-| DB·로그 / feelosophysics (alzznd) | 페이지네이션·통계·CLI/SQL·DB테스트, 도메인 프롬프트·문서, FE연동/UI·AI옵션/오류 보완 |
-| AI·채팅 / 담당자 표기 대기 | 기존 AI/SSE·문맥 구성의 개인별 작업 요약 보완 필요 |
+| 감독 / dolphin1404 (Kyumin Lee) | PR 템플릿 작성, 리뷰·통합 관리 담당 |
+| 인증 / bwmin | 닉네임 모델·스키마, 비밀번호 정책/변경 API, 검증 오류 처리와 인증 회귀 테스트 |
+| DB·로그·AI·FE 통합 / feelosophysics (alzznd) | 초기 BE/AI/SSE·문맥 구현, 페이지네이션·통계·CLI/SQL·DB테스트, 도메인 프롬프트·문서, FE연동/UI·AI옵션/오류·운영 보완 |
 
-개인 작업 브랜치 → develop 대상 PR → 감독 리뷰 → 통합 흐름을 사용합니다. develop → main 병합은 감독이 담당합니다. 팀원별 유의미한10회 커밋과 AI담당자 요약은 [미션 점검표](docs/mission-checklist.md)의 제출 항목입니다.
+Git 이력의 alzznd와 feelosophysics는 같은 작성자입니다. 위 구현 요약은 실제 커밋 기준입니다. 개인 작업 브랜치 → develop 대상 PR → develop → main PR 흐름으로 개별 커밋을 보존해 통합합니다. 평가 전 최종 통합·배포는 owner 요청으로 진행하며, 리뷰 요청 상태와 실제 승인 여부는 PR에서 확인할 수 있습니다.
+
+운영 기준은 두 저장소의 main입니다. FE는 Vercel Production, BE는 기존 EC2의 `/home/ubuntu/apps/chat-be`에서 `chat-be.service`로 실행합니다. DB는 앱 외부의 `/home/ubuntu/chat-data/chatbot.db`에 보존합니다. BE main 병합 뒤 서버 코드 반영·검증·재시작을 별도로 수행합니다. DB 확인은 웹의 내 기록, 위 로그 API 또는 [SQL](scripts/check_logs.sql)·[조회 스크립트](scripts/check_logs.py)를 사용합니다.
 
 ## 문서 안내
 
