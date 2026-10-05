@@ -1,78 +1,40 @@
-# 💾 Role 2: 데이터 & 로깅 (DB & Logging) 담당자 가이드
+# DB·로그 담당자 학습·실습 가이드
 
-본 문서는 **SQLite 데이터베이스 모델링, 대화 이력 영속화, 구조화된 애플리케이션 로깅 및 로그 검증 도구**를 담당하는 팀원을 위한 개발 및 분석 가이드입니다.
+공통 흐름은 [통합 학습 가이드](../deep_dive_study_guide.md), 실행/API는 [README](../../README.md)를 참고합니다.
 
----
+## 읽을 코드
 
-## 📌 1. 담당 영역 및 핵심 파일
+| 파일 | 살펴볼 내용 |
+|---|---|
+| [models/chat.py](../../app/models/chat.py) | 대화방·메시지·FK·relationship |
+| [core/database.py](../../app/core/database.py) | engine·SessionLocal·get_db |
+| [api/v1/chat.py](../../app/api/v1/chat.py) | 질문과 답변의 별도 commit·rollback |
+| [api/v1/logs.py](../../app/api/v1/logs.py) | 소유권·필터·count·통계 |
+| [core/logging.py](../../app/core/logging.py) / [middlewares.py](../../app/core/middlewares.py) | 이벤트·request_id와 측정 범위 |
+| [check_logs.py](../../scripts/check_logs.py) / [check_logs.sql](../../scripts/check_logs.sql) | CLI·SQL 집계 |
+| [test_db.py](../../tests/test_db.py) / [test_chat_reliability.py](../../tests/test_chat_reliability.py) | 모델·초기 저장·답변 저장 장애 검증 |
 
-| 구분 | 파일 경로 | 설명 |
-| :--- | :--- | :--- |
-| **API 라우터** | `app/api/v1/logs.py` | 사용자별 대화 로그 조회 (`GET /api/v1/logs`), 통계 API |
-| **DB 설정/세션** | `app/core/database.py` | SQLite 엔진 생성, `Base` 선언, `get_db` 세션 제너레이터 |
-| **로깅 시스템** | `app/core/logging.py` | 표준 규격 로그 포맷터 (`request_received`, `ai_call_start` 등) |
-| **미들웨어** | `app/core/middlewares.py` | 요청마다 UUID `request_id` 발급 및 추적 미들웨어 |
-| **데이터 모델** | `app/models/chat.py` | `ChatSession` (대화방) 및 `ChatMessage` (메시지/지연시간/상태) ORM 모델 |
-| **검증 스크립트** | `scripts/check_logs.py` | 터미널에서 즉시 최근 DB 대화 로그 및 통계를 조회하는 CLI 도구 |
-| **검증 SQL** | `scripts/check_logs.sql` | SQLite CLI에서 직접 실행 가능한 표준 SQL 쿼리문 |
-| **단위 테스트** | `tests/test_db.py` | 세션/메시지 CRUD 및 관계형 무결성 테스트 |
+## 현재 기능과 남은 한계
 
----
+세션 필터, 페이지네이션 전체 count, `/logs/stats`, CLI 색상 표시, SQL TOP 5·시간대 집계는 이미 구현돼 있다. 각 쿼리의 집계범위와 소유권조건을 살펴본다.
 
-## 🗄️ 2. 데이터베이스 스키마 구조 (ERD)
+세션·질문 저장 이벤트에는 request_id와 entity가 있다. ChatMessage 행에는 request_id·turn_id가 없다. 이벤트 로그와 DB 대화 기록의 연결 범위를 구별한다. db_save_failed가 발생했다고 예외 원인이 항상 DB인 것은 아니다.
 
-```
-[ users ] (1)
-   │
-   └──< (N) [ chat_sessions ] (1)
-               │
-               └──< (N) [ chat_messages ]
-```
+SQLite 연결에는 check_same_thread=False만 명시돼 있다. timeout=30·WAL·외래키 PRAGMA 활성화가 설정돼 있다고 설명하지 않는다. DB 잠금은 쓰기 트랜잭션의 길이·경합·연결 설정을 확인해서 판단한다. ORM cascade와 직접 SQL 삭제에서의 FK 강제는 따로 검증한다.
 
-### 테이블 상세 정의 (`app/models/chat.py`)
-- **`chat_sessions`**:
-  - `id` (INTEGER, PK, Auto-Increment)
-  - `user_id` (INTEGER, FK -> users.id)
-  - `title` (VARCHAR(200)): 첫 질문 기반 요약 제목
-  - `created_at`, `updated_at` (DATETIME)
-- **`chat_messages`**:
-  - `id` (INTEGER, PK, Auto-Increment)
-  - `session_id` (INTEGER, FK -> chat_sessions.id)
-  - `user_id` (INTEGER, FK -> users.id)
-  - `role` (VARCHAR(20)): `'user'` 또는 `'assistant'`
-  - `content` (TEXT): 질문 또는 AI 답변 본문
-  - `latency_ms` (INTEGER): AI 응답 생성 소요 시간 (밀리초)
-  - `status` (VARCHAR(20)): `'success'`, `'error'`, `'timeout'`
-  - `created_at` (DATETIME)
+## 읽기·검증 실습
 
----
+1. User → ChatSession → ChatMessage 예시를 그리고 대화방과 SQLAlchemy Session을 구분한다.
+2. 초기 질문 저장 실패와 답변 저장 실패의 commit 경계를 따라간다. 질문만 남는 경우를 설명한다.
+3. 두 사용자의 격리 데이터로 일반 사용자·관리자 조회 범위를 예측한다. limit보다 많은 데이터를 만들고 total과 items 길이가 다른지 확인한다.
+4. 지연시간 0·NULL·정상·오류 답변을 섞어서 API·CLI·SQL의 평균 대상 차이를 설명한다. SQL 파일도 쿼리별 모집단이 다를 수 있다.
+5. 신뢰성 테스트에서 DB 오류를 주입하는 방법을 읽고 SSE error·DB 행·저장 이벤트가 어떻게 대응하는지 확인한다.
+6. 필요하면 격리 DB에서 PRAGMA foreign_keys를 조회하고 ORM 삭제와 직접 SQL 삭제를 비교한다. 모델 선언만으로 실험 결과를 미리 확정하지 않는다.
 
-## 📝 3. 구조화된 로그 이벤트 규격 (`app/core/logging.py`)
+테스트와 CLI는 설정된 DB에 접근한다. 통합 가이드의 격리 준비 후 사용한다. 기존 앱 import의 init_db와 생성기 별도 SessionLocal까지 확인한다.
 
-미션 평가 및 운영 모니터링을 위해 다음 4가지 핵심 이벤트를 일관된 포맷으로 출력합니다:
+## 설명 확인과 후속 개선 후보
 
-1. **`request_received`**: API 요청 수신 시 (`user_id`, `path`, `request_id`)
-2. **`ai_call_start`**: AI API(Gemini) 호출 시작 시 (`request_id`, `model`)
-3. **`ai_call_success`**: AI API 정상 응답 수신 시 (`request_id`, `latency_ms`)
-4. **`db_save_success`**: 대화 메시지가 SQLite DB에 안전하게 커밋되었을 때 (`chat_id`, `session_id`)
+질문 success는 왜 AI 성공이 아닐까? 평균값을 비교하기 전에 무엇을 맞춰야 할까? 요청 ID만으로 DB 행까지 추적 가능한가?
 
----
-
-## 🧪 4. 테스트 및 검증 방법
-
-### 1) 자동화 테스트 실행
-```bash
-pytest tests/test_db.py -v
-```
-
-### 2) CLI 검증 스크립트 실행
-서버에서 채팅이 이루어진 후, 터미널에서 아래 명령어로 DB에 적재된 로그를 검증합니다:
-```bash
-python scripts/check_logs.py
-```
-
-### 3) SQL 직접 쿼리 검증
-```bash
-# Windows PowerShell / CMD
-sqlite3 chatbot.db ".read scripts/check_logs.sql"
-```
+후속 후보는 부분 답변 보존 정책, DB 행의 요청 연결, 이력 조회량 제한, 집계 정의 통일이다. 코드 읽기·재현 뒤 하나를 정하고 필요한 수정과 검증만 수행한다. 변경의 목적과 재현결과를 PR에 함께 작성한다.

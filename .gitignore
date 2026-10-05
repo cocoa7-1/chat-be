@@ -1,3 +1,5 @@
+# Git에 올리지 않을 파일 규칙입니다. 캐시·설치 파일·비밀 설정 등을 소스 이력과 분리합니다.
+# 이미 Git이 추적 중인 파일은 이 규칙을 추가하는 것만으로 이력에서 지워지지 않습니다.
 # Environment variables and secrets
 .env
 .env.local
@@ -54,3 +56,7 @@ Thumbs.db
 .coverage
 htmlcov/
 .pytest_cache/
+
+# Mission raw reference assets
+mission.html
+mission_text.txt

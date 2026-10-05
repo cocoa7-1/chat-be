@@ -1,301 +1,143 @@
-# 🔬 웹 기반 AI 챗봇 서비스 개발: 초정밀 현미경 학습 가이드 및 마스터 로드맵
+# 챗봇 학습 가이드
 
-> **문서 목적**: 본 가이드는 [mission.html](file:///c:/Users/alzznd/Desktop/chatbot/mission.html) 미션의 요구사항과 본 프로젝트에 구현된 실제 코드베이스([c:/Users/alzznd/Desktop/chatbot](file:///c:/Users/alzznd/Desktop/chatbot)) 간의 정합성을 1:1로 매핑하여, 시스템의 모든 레이어를 현미경 수준으로 분해하고 학습하기 위해 작성된 종합 엔지니어링 가이드입니다.
+사용자 행동부터 서버 처리와 DB 저장까지 읽는 공통 학습 가이드입니다. 역할별 문서는 담당 영역의 코드와 실습을 다룹니다.
 
----
+실행·API는 [README](../README.md), 평가요건은 [미션 원문](mission_requirements.md)과 [점검표](mission-checklist.md), 배포는 [배포 가이드](deployment.md)를 참고합니다.
 
-## 🧭 [Part 1] 미션의 본질적 함의와 아키텍처 정합성
+## 1. 먼저 이해할 전체 흐름
 
-### 1.1 왜 단순한 'AI API 호출'이 아닌 '웹 서비스'인가?
-단순히 터미널에서 LLM API를 호출하는 것은 수십 줄의 코드로 가능합니다. 하지만 **실제 사용자가 접속하여 사용하는 엔터프라이즈급 AI 챗봇 서비스**는 다음의 복합적인 엔지니어링 과제를 해결해야 합니다:
-
-```
-[클라이언트 (브라우저)]
-       │  ▲  (HTTP Request / SSE Event Stream)
-       ▼  │
-[FastAPI 웹 서버] ── (Request ID 추적 & 지연시간 측정 미들웨어)
-       │
-       ├── [보안/인증 계층]: Bcrypt 해시 검증 + HttpOnly Cookie JWT 토큰 발행
-       ├── [세션/상태 관리]: 멀티 세션 CRUD + 최근 N개 롤링 윈도우 컨텍스트 조립
-       ├── [AI 스트리밍 계층]: Google Gemma/Gemini 비동기 스트리밍 + 타임아웃 방어 + Mock 폴백
-       ├── [관측/로깅 계층]: 4대 필수 이벤트(수신, AI호출, AI완료, DB저장) 구조화 로깅
-       └── [데이터 영속화]: SQLite + SQLAlchemy 2.0 ORM (사용자, 세션, 메시지, 지연시간)
-```
-
-### 1.2 미션 요구사항 vs 구현 결과 정합성 매트릭스
-
-| 미션 요구 영역 | 미션 명세 세부 요건 | 실제 구현 파일 및 함수 | 정합성 검증 결과 |
-| :--- | :--- | :--- | :---: |
-| **단일 서버 패키징** | 별도 프론트 빌드 없이 단일 명령어로 실행 | [app/main.py](file:///c:/Users/alzznd/Desktop/chatbot/app/main.py), [app/api/web.py](file:///c:/Users/alzznd/Desktop/chatbot/app/api/web.py) | **100% 충족** (`uv run python app/main.py`) |
-| **사용자 인증 & 보안** | 계정 생성, 로그인, 인증 기반 접근 제어 | [app/core/security.py](file:///c:/Users/alzznd/Desktop/chatbot/app/core/security.py), [app/api/deps.py](file:///c:/Users/alzznd/Desktop/chatbot/app/api/deps.py) | **100% 충족** (Bcrypt + HttpOnly JWT) |
-| **실시간 스트리밍** | 타이핑 효과 실시간 토큰 전송 (SSE/WebSocket) | [app/services/gemini_service.py](file:///c:/Users/alzznd/Desktop/chatbot/app/services/gemini_service.py), [app/api/v1/chat.py](file:///c:/Users/alzznd/Desktop/chatbot/app/api/v1/chat.py) | **100% 충족** (`text/event-stream` SSE) |
-| **대화 문맥 유지** | 이전 대화 질문/답변 고려한 연속 대화 | `gemini_service._build_context_messages` | **100% 충족** (최근 10개 롤링 윈도우) |
-| **안정성 & 타임아웃** | AI API 타임아웃(30초) 및 실패 시 친절한 안내 | `gemini_service.stream_chat_response` | **100% 충족** (`AI_TIMEOUT`, Mock Fallback) |
-| **구조화된 로깅** | 4대 필수 이벤트(수신, 호출, 완료, 저장) 기록 | [app/core/logging.py](file:///c:/Users/alzznd/Desktop/chatbot/app/core/logging.py), [app/core/middlewares.py](file:///c:/Users/alzznd/Desktop/chatbot/app/core/middlewares.py) | **100% 충족** (Request ID 연계 로거) |
-| **대화 로그 영속화** | 질문, 응답, 지연시간(ms), 상태 DB 저장 | [app/models/chat.py](file:///c:/Users/alzznd/Desktop/chatbot/app/models/chat.py), `ChatMessage` | **100% 충족** (SQLite ORM 매핑) |
-| **로그 검증 도구** | 평가자가 로그를 확인하는 Web UI / CLI / SQL | [templates/logs.html](file:///c:/Users/alzznd/Desktop/chatbot/app/templates/logs.html), `check_logs.py`, `check_logs.sql` | **100% 충족** (3종 검증 도구 완비) |
-| **외부 네트워크 접속** | 평가 시점에 외부에서 접속 가능한 URL 제공 | [scripts/run_public.py](file:///c:/Users/alzznd/Desktop/chatbot/scripts/run_public.py) | **100% 충족** (원클릭 터널링 스크립트) |
-| **형상관리 & 협업** | Git Flow 브랜치, PR 이력, 10회 이상 커밋 | [scripts/setup_git_workflow.py](file:///c:/Users/alzznd/Desktop/chatbot/scripts/setup_git_workflow.py), [docs/decision_log.md](file:///c:/Users/alzznd/Desktop/chatbot/docs/decision_log.md) | **100% 충족** (ADR 13종 & 브랜치 셋업) |
-
----
-
-## 🔬 [Part 2] 9단계 초정밀 현미경 학습 로드맵 (Step-by-Step)
-
-```
-[Step 1: 환경 격리 & 시크릿 보안]
-       ↓
-[Step 2: SQLite ORM 데이터 모델링]
-       ↓
-[Step 3: Bcrypt 암호화 & JWT 쿠키 인증]
-       ↓
-[Step 4: 비동기 SSE 실시간 토큰 스트리밍]
-       ↓
-[Step 5: 타임아웃 방어 & Smart Mock 폴백]
-       ↓
-[Step 6: Request ID 추적 & 4대 구조화 로깅]
-       ↓
-[Step 7: Jinja2 SSR & Vanilla JS 반응형 UI]
-       ↓
-[Step 8: E2E 자동화 테스트 & DB 무결성 검증]
-       ↓
-[Step 9: Git 브랜치 전략 & 팀 역할 분담]
-```
-
----
-
-### 📍 Step 1: 환경 격리와 시크릿 관리 (Isolation & Secrets)
-
-#### 1.1 핵심 개념
-- **도구**: `uv` (초고속 가상환경 격리 도구) + `pydantic-settings`
-- **문제 의식**: API 키나 DB 경로 같은 민감 정보가 소스코드에 하드코딩되면 깃허브 등에 유출되어 보안 사고로 이어집니다.
-- **해결 원리**: 
-  - `.env` 파일에 시크릿을 격리하고, `.gitignore`로 버전 관리에서 원천 배제합니다.
-  - [app/core/config.py](file:///c:/Users/alzznd/Desktop/chatbot/app/core/config.py)에서 `SettingsConfigDict`를 통해 타입 검증과 함께 싱글톤(`@lru_cache`)으로 로드합니다.
-
-#### 1.2 코드 현미경 분석
-```python
-# app/core/config.py
-class Settings(BaseSettings):
-    APP_NAME: str = "AI Learning Tutor Chatbot"
-    GEMINI_API_KEY: Optional[str] = ""
-    GEMINI_MODEL_NAME: str = "gemma-4-26b-a4b-it"  # AI Studio Gemma 4 26B
-    AI_TIMEOUT_SECONDS: int = 30                  # 30초 넉넉한 타임아웃
-    
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
-```
-
-#### 💡 Step 1 자가 점검 질문
-> **Q1**: `python-dotenv` 대신 `pydantic-settings`를 쓰면 어떤 이점(타입 검증, 기본값, 유효성 검사 등)이 있을까요?  
-> **Q2**: `.env.example`을 저장소에 남겨두는 이유는 무엇일까요?
-
----
-
-### 📍 Step 2: 데이터베이스 엔티티 모델링과 ORM 관계 (ORM Modeling)
-
-#### 2.1 핵심 개념
-- **도구**: `SQLAlchemy 2.0` Declarative Base + `SQLite`
-- **데이터 모델 계층 구조**:
-  - `User` (1) $\longleftrightarrow$ (N) `ChatSession` (1) $\longleftrightarrow$ (N) `ChatMessage`
-
-```
-  ┌──────────────┐          ┌──────────────────┐          ┌──────────────────┐
-  │     User     │ 1      N │   ChatSession    │ 1      N │   ChatMessage    │
-  ├──────────────┤──────────├──────────────────┤──────────├──────────────────┤
-  │ id (PK)      │          │ id (PK)          │          │ id (PK)          │
-  │ username     │          │ user_id (FK)     │          │ session_id (FK)  │
-  │ password_hash│          │ title            │          │ user_id (FK)     │
-  │ is_active    │          │ created_at       │          │ role (user/asst) │
-  │ created_at   │          │ updated_at       │          │ content          │
-  └──────────────┘          └──────────────────┘          │ latency_ms (측정)│
-                                                          │ status (성공여부)│
-                                                          │ error_message    │
-                                                          │ created_at       │
-                                                          └──────────────────┘
-```
-
-#### 2.2 코드 현미경 분석
-```python
-# app/models/chat.py
-class ChatMessage(Base):
-    __tablename__ = "chat_messages"
-
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    session_id: Mapped[int] = mapped_column(ForeignKey("chat_sessions.id", ondelete="CASCADE"))
-    role: Mapped[str] = mapped_column(String(20)) # "user" 또는 "assistant"
-    content: Mapped[str] = mapped_column(Text)
-    latency_ms: Mapped[Optional[int]] = mapped_column(Integer, default=0) # AI 응답 시간
-    status: Mapped[str] = mapped_column(String(20), default="success")    # "success" or "error"
-```
-
-#### 💡 Step 2 자가 점검 질문
-> **Q1**: `ondelete="CASCADE"` 옵션이 왜 세션 삭제 시 필수적일까요?  
-> **Q2**: `ChatMessage` 테이블에 `latency_ms`와 `status` 컬럼이 반드시 존재해야 하는 미션상 이유는 무엇일까요?
-
----
-
-### 📍 Step 3: 인증/인가 아키텍처와 보안 무결성 (Auth & Security)
-
-#### 3.1 핵심 개념
-- **비밀번호 단방향 암호화**: `passlib[bcrypt]`를 사용하여 레인보우 테이블 공격 방어
-- **JWT (JSON Web Token)**: 서명 기반의 무상태(Stateless) 토큰 발급 (`HS256`)
-- **보안 쿠키 (`HttpOnly Cookie`)**: LocalStorage에 토큰을 저장할 경우 XSS(자바스크립트 탈취) 공격에 취약하므로 브라우저 스크립트가 접근할 수 없는 `HttpOnly` 쿠키로 전송.
-
-#### 3.2 인증 처리 시퀀스 다이어그램
-```mermaid
-sequenceDiagram
-    autonumber
-    actor User as 브라우저 (사용자)
-    participant Auth as Auth API (/api/v1/auth/login)
-    participant Sec as Security 모듈 (Bcrypt/JWT)
-    participant DB as SQLite DB
-
-    User->>Auth: POST /api/v1/auth/login (username, password)
-    Auth->>DB: 사용자 레코드 조회 (User query)
-    DB-->>Auth: user 객체 (암호화된 password_hash 포함)
-    Auth->>Sec: verify_password(plain, hash)
-    Sec-->>Auth: 일치 확인 (True)
-    Auth->>Sec: create_access_token(data={"sub": user_id})
-    Sec-->>Auth: signed JWT token
-    Auth-->>User: Set-Cookie: access_token=...; HttpOnly; SameSite=Lax + 200 OK
-```
-
-#### 3.3 의존성 주입(`Depends(get_current_user)`)
-```python
-# app/api/deps.py
-def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
-    # 1. Cookie에서 access_token 추출 (Fallback: Authorization 헤더)
-    token = request.cookies.get(settings.COOKIE_NAME)
-    # 2. JWT 서명 검증 및 만료 시간 확인
-    payload = decode_access_token(token)
-    # 3. DB에서 유효 사용자 조회
-    user = db.get(User, int(payload.get("sub")))
-    if not user:
-        raise HTTPException(status_code=401, detail="인증되지 않은 사용자입니다.")
-    return user
-```
-
----
-
-### 📍 Step 4: 비동기 실시간 스트리밍 (SSE Pipeline)
-
-#### 4.1 핵심 개념
-- **WebSocket vs SSE(Server-Sent Events)**:
-  - WebSocket: 양방향 전송 (연결 유지 오버헤드, 프록시 설정 복잡)
-  - **SSE (`text/event-stream`)**: 클라이언트 $\rightarrow$ 서버 단방향 요청 후, 서버 $\rightarrow$ 클라이언트로 실시간 토큰을 청크 단위로 스트리밍. HTTP 표준 프로토콜을 그대로 사용하여 가볍고 안정적임.
-- **롤링 윈도우 컨텍스트(Rolling Window Context)**: 최근 10개의 대화 이력을 추출하여 AI에게 전달함으로써 대화 맥락을 유지.
-
-#### 4.2 스트리밍 파이프라인 시퀀스 다이어그램
-```mermaid
-sequenceDiagram
-    autonumber
-    actor Client as 웹 프론트엔드 (chat.js)
-    participant Router as Chat Router (/api/v1/chat/stream)
-    participant Gemini as Gemini AI Service
-    participant DB as SQLite DB
-
-    Client->>Router: POST /api/v1/chat/stream {message: "...", session_id: 1}
-    Router->>DB: 사용자 질문 INSERT (role='user')
-    Router->>Gemini: stream_chat_response(history, question)
-    Gemini-->>Router: yield event: meta (session_id, request_id)
-    Router-->>Client: data: {"text": "토"}
-    Router-->>Client: data: {"text": "큰"}
-    Router-->>Client: data: {"text": "스트리밍..."}
-    Gemini-->>Router: yield done (full_text, latency_ms)
-    Router->>DB: AI 응답 INSERT (role='assistant', latency_ms=1240, status='success')
-    Router-->>Client: event: done (latency_ms, status)
-```
-
----
-
-### 📍 Step 5: 회복탄력성과 장애 방어 (Resilience & Mock Fallback)
-
-#### 5.1 핵심 개념
-- **타임아웃 래퍼**: 외부 AI API가 지연될 때 시스템 전체가 블로킹되지 않도록 `asyncio.wait_for(..., timeout=30)` 적용.
-- **Graceful Error Handling**: 404 NOT_FOUND나 할당량 초과 발생 시 서버가 죽지 않고 에러 카드(`AI_SERVICE_ERROR`)를 클라이언트에 전송.
-- **Smart Demo / Mock 모드**: API 키가 없거나 테스트 환경일 때도 실제 AI처럼 토큰 단위로 타이핑되며 학습 가이드를 출력하는 지능형 Mock 생성기 탑재.
-
-```python
-# app/services/gemini_service.py
-if not self.is_live_api():
-    # API 키가 없으면 자동으로 학습용 스마트 Mock 모드로 전환
-    mock_reply = self._generate_mock_reply(current_question)
-    for chunk in self._chunk_text(mock_reply):
-        await asyncio.sleep(0.04) # 자연스러운 타이핑 속도 시뮬레이션
-        yield {"text": chunk, "done": False}
-```
-
----
-
-### 📍 Step 6: 관측 가능성과 구조화된 로깅 (Observability & Logging)
-
-#### 6.1 미션 필수 4대 이벤트
-미션 명세서에 규정된 **4가지 핵심 라이프사이클 이벤트**를 Request ID와 결합하여 표준 포맷으로 출력:
-
-1. `request_received`: 요청이 서버에 도달한 시점 (`user_id`, `path`, `request_id`)
-2. `ai_call_start`: 외부 AI API 호출을 개시한 시점 (`model`, `request_id`)
-3. `ai_call_success` (또는 `ai_call_failed`): AI 응답 수신 완료 및 지연시간 측정 (`latency_ms`)
-4. `db_save_success` (또는 `db_save_failed`): 대화 레코드가 DB에 안전하게 커밋된 시점 (`chat_id`, `session_id`)
+학습 목표는 사용자 행동부터 서버 처리와 DB 결과까지 자신의 말로 설명하는 것이다. 회차별로 개념 → 실제 코드 → 정상 결과 예측 → 실패 조건 → 설명 또는 실습 순서로 읽는다. 모르는 용어가 나오면 그 지점에서 멈추고 질문한다.
 
 ```text
-[2026-08-25 06:07:17] INFO  chatbot.server: request_received user_id=1 path=/api/v1/chat/stream request_id=6f6954f1
-[2026-08-25 06:07:17] INFO  chatbot.server: ai_call_start user_id=1 request_id=6f6954f1 model=gemma-4-26b-a4b-it
-[2026-08-25 06:07:24] INFO  chatbot.server: ai_call_success request_id=6f6954f1 latency_ms=7157
-[2026-08-25 06:07:24] INFO  chatbot.server: db_save_success user_id=1 chat_id=2 session_id=1
+브라우저 → Vercel: HTML/CSS/JavaScript 화면 받기
+브라우저 → 백엔드 HTTPS → Caddy → Uvicorn → FastAPI
+                                           ├─ SQLite: 계정·대화 저장
+                                           └─ Google AI API: 답변 생성
 ```
 
----
+브라우저는 Vercel에서 받은 JavaScript로 백엔드에 직접 요청한다. 프런트엔드와 백엔드는 별도 저장소·배포다. BE 변경이 FE에 자동 반영되는 것은 아니다.
 
-### 📍 Step 7: 단일 서버 패키징과 프론트엔드 UI (SSR & Client State)
+Vercel 운영 주소는 운영용으로 지정된 배포를, `…-git-…` 브랜치 주소는 해당 브랜치의 최신 배포를 가리킨다. 둘이 같은 배포를 가리킬 수도 있다. 현재 FE README에는 Production 추적 브랜치가 `dev/log-frontend-integration`으로 기록돼 있다. 실제 별칭 대상은 Vercel에서 확인한다. 로그인 토큰은 브라우저의 주소별 localStorage에 저장되므로 주소가 달라지면 다시 로그인할 수 있다.
 
-#### 7.1 구조적 특징
-- 별도의 Node.js 번들러(Webpack/Vite) 빌드 과정 없이, FastAPI의 `Jinja2Templates`와 CDN 기반 `TailwindCSS`, `Marked.js`(마크다운 렌더러), `Highlight.js`(코드 하이라이터)를 조합하여 **단일 실행 가능한 아키텍처** 완성.
-- [app/static/js/chat.js](file:///c:/Users/alzznd/Desktop/chatbot/app/static/js/chat.js)의 상태 머신:
-  - `ReadableStreamDefaultReader`로 `fetch` 응답 청크를 실시간 디코딩
-  - 대화 세션 생성, 삭제, 전환 및 스크롤 자동 동기화
+## 2. 용어를 역할별로 구분하기
 
----
+| 용어 | 의미 | 우리 프로젝트에서의 위치 |
+|---|---|---|
+| API | 다른 프로그램에 요청하는 접점 | 로그인·대화 조회·질문 요청 |
+| HTTP | 요청과 응답을 전달하는 규칙 | GET·POST·DELETE, 상태 코드·헤더 |
+| REST | 자원과 일관된 인터페이스 등으로 API를 설계하는 스타일 | `/chat/sessions` 조회·생성·삭제 |
+| FastAPI | 파이썬 웹 프레임워크 | 요청을 함수에 연결하고 데이터 검사·응답 처리 |
+| Uvicorn | FastAPI 앱을 실행하는 ASGI 서버 | HTTP 연결을 받아 앱에 전달 |
+| JSON | 데이터를 표현하는 형식 | 요청 본문·일반 API 응답·SSE의 data 내용 |
+| SSE | Server-Sent Events, 서버가 이벤트를 순차 전송하는 방식 | AI 답변 조각과 meta·done·error 이벤트 |
+| SSR | Server-Side Rendering, 서버에서 HTML을 만드는 방식 | 현재 화면은 정적 FE와 브라우저 JavaScript로 구성 |
+| SEO | 검색엔진이 콘텐츠를 찾고 이해하도록 돕는 최적화 | SSE와 별개. SSR 설명과 혼동하지 않기 |
+| ORM | 객체를 통해 DB 작업을 표현하는 도구 | SQLAlchemy의 모델·Session·쿼리 |
 
-### 📍 Step 8: 다차원 테스트 & 무결성 검증 (Testing & Verification)
+REST는 설치하는 라이브러리가 아니고 FastAPI는 REST API를 구현할 수 있는 도구다. JSON을 사용하거나 GET·POST를 나누는 것만으로 REST의 모든 제약을 충족했다고 단정하지 않는다. 스트리밍은 순차 처리·전달이라는 넓은 개념이며 SSE는 그 구현 방식 중 하나다. GraphQL·RPC는 다른 API 접근 방식이고, WebSocket은 양방향 통신 방식이다.
 
-#### 8.1 3중 검증 체계
-1. **Pytest 단위/통합 테스트** (`uv run pytest`):
-   - `test_auth.py`: 회원가입, 중복 방지, 로그인, 미인증 401 차단
-   - `test_chat.py`: 세션 생성, SSE 스트림 이벤트, 메시지 영속화
-   - `test_db.py`: ORM 매핑 및 Cascade Delete 무결성
-2. **E2E 시나리오 테스트** (`uv run python scripts/test_api.py`):
-   - 실제 HTTP 요청을 순차 실행하여 6단계 비즈니스 흐름 전체 자동 검증
-3. **DB 감사 리포트 CLI** (`uv run python scripts/check_logs.py`):
-   - SQLite DB의 사용자, 세션, 메시지, 평균 응답 지연시간(ms)을 CLI 테이블로 출력
+REST는 Roy Fielding이 2000년 논문에서 정리했다. FastAPI는 파이썬 타입 표기와 기존 Starlette·Pydantic을 활용해 반복되는 API 개발 작업을 줄이는 방향으로 만들어졌다. 참고: [REST 원문](https://ics.uci.edu/~fielding/pubs/dissertation/abstract.htm), [FastAPI 개발 배경](https://fastapi.tiangolo.com/history-design-future/), [SSE 표준](https://html.spec.whatwg.org/multipage/server-sent-events.html).
 
----
+## 3. 파이썬 문법과 FastAPI 연결
 
-### 📍 Step 9: Git 협업 전략 및 팀 역할 분담 (Git Flow & Team Roles)
+```python
+@app.get('/hello')
+def hello():
+    return {'message': '안녕'}
+```
 
-#### 9.1 Git Flow 브랜치 구조
+`@`는 파이썬 데코레이터 문법이다. 개념적으로 `hello = app.get('/hello')(hello)`와 같다. 여기서는 함수 정의 시 GET `/hello` 처리 함수로 등록하며, 요청이 들어왔을 때 함수 본문을 실행한다. 실제 대화 API는 `APIRouter`에 등록하고 `/api/v1`과 `/chat` 접두어를 붙인다.
+
+`Depends(get_current_user)`는 FastAPI가 인증 함수를 실행하고 그 결과를 인자로 제공하도록 선언한다. `get_current_user` 자체도 `Depends(get_db)`로 DB 세션을 받아 서명·만료 확인 뒤 사용자 존재·활성 상태를 조회한다. 정확한 의존성 순서는 의존 관계를 읽어 판단한다.
+
+`yield`는 값을 하나 전달하고 실행을 이어갈 수 있게 하는 문법이다. `get_db`에서는 DB 세션을 제공하고 사용 뒤 닫는 데, AI 서비스에서는 답변 조각을 전달하는 데 쓴다. `async def`라고 선언했다고 함수 안의 동기 DB 작업까지 비동기가 되는 것은 아니다.
+
+## 4. 한 질문의 처리 순서
+
+읽을 코드: [chat.py](../app/api/v1/chat.py), [AI 서비스](../app/services/gemini_service.py), [인증 의존성](../app/api/deps.py). 화면의 요청·수신은 프런트 저장소 `js/chat.js`에 있다.
+
+1. 브라우저가 Bearer 토큰, 질문, 선택적 session_id를 POST `/api/v1/chat/stream`으로 보낸다.
+2. 인증·입력 검증 후 요청 횟수와 동시 처리 제한을 검사한다. 제한 거절은 HTTP 429이며 질문 저장·AI 호출을 하지 않는다.
+3. 소유한 대화방을 찾거나 새로 만들고 질문을 저장한다. 새 대화방과 질문은 한 트랜잭션에서 commit하므로 초기 저장 실패 시 둘 다 rollback한다.
+4. 현재 질문 ID를 제외한 이력을 읽어 스냅샷으로 준비한다. 질문 commit 후 스트리밍 응답을 시작한다.
+5. 생성기에서 별도 `SessionLocal` DB 세션을 열고 meta 이벤트를 보낸다.
+6. AI 서비스는 이전 메시지의 마지막 `MAX_HISTORY_MESSAGES`개와 현재 질문을 전달한다. 기본 10은 질문·답변 각각을 세는 메시지 수다. DB 이력 조회 자체는 전체를 읽는다.
+7. 받은 답변 조각을 서비스의 `full_response`에 누적하면서 API에 전달한다. API는 SSE로 브라우저에 보내고, 화면도 받은 내용을 누적해서 표시한다.
+8. AI 서비스의 최종 결과를 받은 뒤 답변을 별도 트랜잭션으로 저장한다. 그다음 done 이벤트를 보낸다.
+
+현재 질문·답변은 별도 행·별도 commit이다. 답변을 조각마다 저장하지 않는다. 존재하지 않거나 다른 사용자 소유의 session_id를 전달하면 현재 스트림 코드는 새 대화방을 만든다. 조회·삭제 API의 404 처리와 구별한다.
+
+## 5. 실패하면 무엇이 남는가?
+
+| 조건 | 결과 |
+|---|---|
+| 초기 세션·질문 저장 실패 | HTTP 500 JSON. 자동 생성 세션과 질문 rollback, AI 호출 안 함 |
+| AI 정상 종료 | 전체 답변을 status=success로 저장한 뒤 done |
+| AI 시간 초과 | 부분 답변 + 오류 안내를 status=error, error_message=AI_TIMEOUT으로 저장하는 경로 |
+| 일반 AI 호출 예외 | 부분 답변 + 오류 안내를 status=error, error_message=AI_SERVICE_ERROR로 저장하는 경로 |
+| 저장 전 작업 취소·서버 종료 | 부분 답변 저장을 보장하지 못함. 이미 commit된 질문은 남음 |
+| 답변 commit 실패 | 해당 답변 rollback, 질문은 남음. SSE error 안내 경로 |
+
+AI 오류 결과도 후속 DB 저장이 성공해야 보존된다. 연결이 끊겼을 때 이미 답변 commit을 끝냈다면 답변은 남을 수 있다. 화면에 보였다는 사실과 DB에 저장됐다는 사실을 구분한다. 현재 취소 시 부분 답변 저장·주기적 체크포인트·이어받기는 구현하지 않았다.
+
+연결 시작과 매 응답 읽기에 같은 deadline을 사용한다. 일반요청은 `AI_TIMEOUT_SECONDS` 기본60초, 검색요청은 `AI_SEARCH_TIMEOUT_SECONDS` 기본90초이며 SDK스트림정리는 별도로 최대1초다. 인증·DB저장·전송은 이 AI제한시간과 별개다. 취소는 호출자로 전파된다.
+
+SSE를 시작한 뒤에는 HTTP 200인 상태에서도 AI 오류가 발생할 수 있다. 브라우저는 HTTP 상태뿐 아니라 done의 status/error와 error 이벤트도 읽어야 한다. 현재 FE는 fetch로 스트림을 직접 읽고 자동 재연결·재개 기능은 제공하지 않는다.
+
+## 6. AI 모델·Mock·웹 검색
+
+현재 기본 모델은 `gemma-4-26b-a4b-it`이다. 모델 학습 지식과 실시간 웹 검색은 별개다. 현재 로컬 코드에는 `GEMINI_SEARCH_ENABLED=True`일 때 `tools=[{'google_search': {}}]`를 전달하는 변경이 있다. False이면 도구를 제공하지 않는다. 도구 제공과 실제 검색 실행은 구별하며, 검색 여부는 모델이 판단한다.
+
+검색연결은 [Gemma Google Search](https://ai.google.dev/gemma/docs/core/gemma_on_gemini_api#google-search)를 따른다. 실제실행은 grounding metadata의 검색어/출처로 구분한다. 출처는 답변본문에 붙여 DB에 저장하고 검색상태·검색제안은 SSE done으로 전달한다. 검색거절·옵션오류·사용량제한·빈답변을 분류하며 다른모델로 자동 전환하지 않는다.
+
+키가 없으면 Demo 응답을 생성하고, 키가 있는데 SDK 초기화가 실패하면 AI_INIT_ERROR로 안내한다. Mock는 준비한 문자열을 나눠 보내는 연결 시험용이다. 실제 검색·실제 모델의 문맥 이해·응답 품질을 검증하지 않는다. SDK호출 오류는 공급자코드/고정원인분류로 추적하며 예외원문은 노출하지 않는다.
+
+## 7. DB와 로그 읽기
+
 ```text
-main (배포 가능한 안정 버전)
-  │
-develop (기능 통합 브랜치)
-  ├── feature/auth-security     (팀원 A: 인증 및 보안 모듈)
-  ├── feature/gemini-pipeline   (팀원 B: AI 스트리밍 & 타임아웃)
-  ├── feature/db-logging        (팀원 C: DB ORM 모델링 & 로깅)
-  └── feature/ui-frontend       (팀원 D: 반응형 템플릿 & 로그 뷰어)
+User id=7
+  └─ ChatSession id=12, user_id=7
+       ├─ ChatMessage id=31, role=user, content=질문, status=success
+       └─ ChatMessage id=32, role=assistant, content=답변, status=success
 ```
 
-#### 9.2 팀원 역할 분담표 (발표 및 협업 가이드)
-- **팀원 A (인증/보안 엔지니어)**: Bcrypt 해싱, JWT 발급/검증, `HttpOnly` 쿠키 보안, 인증 의존성(`deps.py`) 구현.
-- **팀원 B (AI 파이프라인 엔지니어)**: Google AI Studio Gemma 4 API 연동, SSE 스트리밍 청크 제어, 30초 타임아웃 및 폴백 로직 구현.
-- **팀원 C (데이터/인프라 엔지니어)**: SQLAlchemy 2.0 모델링, Request ID 미들웨어, 4대 구조화 로거, `check_logs.py`/`check_logs.sql` 작성.
-- **팀원 D (풀스택/UI 엔지니어)**: Jinja2 SSR 템플릿, TailwindCSS 채팅 화면, SSE 프론트엔드 상태 머신(`chat.js`), 대화 로그 검증 센터(`/logs`) 구현.
+숫자는 예시다. ChatSession은 DB에 저장하는 대화방이고, SQLAlchemy Session은 DB 작업 객체다. PK는 행의 식별자, FK는 다른 행의 참조, relationship은 파이썬 객체 사이의 접근 관계다. 현재 모델은 `Column`을 사용한다. `create_all()`은 기존 테이블 컬럼 변경을 수행하지 않는다.
 
----
+DB 대화 기록은 다시 보여줄 데이터이고 `logs/server.log`는 운영 이벤트다. 저장 이벤트에는 request_id와 entity가 있으나 ChatMessage 행에는 request_id·turn_id 필드가 없다. 미들웨어는 요청 헤더의 X-Request-ID를 재사용하거나 UUID 앞 8자를 만들므로 매번 전체 UUID를 새로 발급하는 구조는 아니다. 미들웨어가 모든 요청에 request_received를 기록하지 않으며 이벤트는 호출 위치를 확인해야 한다.
 
-## 🎯 [Part 3] 종합 실습 과제 및 모범 답안 가이드 (Hands-on Practice)
+AI latency_ms는 AI 서비스 시작부터 결과 생성까지의 시간이며 전체 요청 시간과 다르다. X-Process-Time-Ms도 call_next 반환까지 측정하므로 마지막 SSE 조각까지의 시간으로 해석하지 않는다. 생성기의 db_save_failed는 여러 종류의 예외를 잡는 위치여서 이름만으로 DB 원인이라고 단정하지 않는다.
 
-### 📌 실습 과제 1: 타임아웃 한계치 튜닝 실험
-- **실습 내용**: `.env` 파일의 `AI_TIMEOUT_SECONDS`를 `2`초로 줄인 뒤 긴 질문을 전송하여, 화면에 `AI_TIMEOUT` 배너가 정상 출력되고 터미널에 `ai_call_failed` 로그가 남는지 확인하기.
-- **학습 포인트**: 장애 상황에서의 서비스 회복탄력성(Resilience) 체득.
+| 집계 도구 | 평균 지연시간 대상 |
+|---|---|
+| `/logs/stats` | 성공 assistant 중 0·None을 제외 |
+| `scripts/check_logs.py` | assistant의 성공·오류를 포함하고 0·None을 제외 |
+| `scripts/check_logs.sql` 사용자별 통계 | 성공 assistant, 0 포함·NULL 제외 |
 
-### 📌 실습 과제 2: Raw SQL 대화 로그 분석
-- **실습 내용**: `scripts/check_logs.sql`을 실행하여 평균 지연시간(`AVG(latency_ms)`)과 실패율을 직접 쿼리해보기.
-- **학습 포인트**: 데이터베이스 감사 쿼리와 모니터링 메트릭 추출 원리 이해.
+`/logs`의 total은 필터에 맞는 전체 메시지 수다. 일반 사용자는 자기 데이터만, 관리자는 필터 또는 전체 데이터를 조회한다. `/logs/stats` 성공률은 성공 답변 수 / 질문 수이며 질문이 없으면 100%다. 질문 행의 success는 질문 저장을 뜻하고 AI 성공을 뜻하지 않는다.
+
+database.py에는 SQLite의 `check_same_thread=False`만 명시돼 있다. `timeout=30`, WAL, 외래키 PRAGMA 활성화는 코드에 선언돼 있지 않다. 스레드 검사 해제는 동시 쓰기·DB 잠금 해결을 보장하지 않는다. ORM cascade 삭제와 DB 외래키 강제는 다른 층위다.
+
+## 8. 학습 순서와 확인 질문
+
+| 회차 | 읽을 코드 | 설명할 수 있어야 할 것 |
+|---|---|---|
+| 1 | main.py, models/user.py, models/chat.py | 화면·서버·DB와 두 종류의 세션 |
+| 2 | deps.py, schemas/auth.py, security.py | Depends, 입력 검사, 해시·JWT·사용자 조회 |
+| 3 | database.py, chat.py 초기 저장 | add/flush/commit/rollback과 질문 저장 경계 |
+| 4 | chat.py 생성기, gemini_service.py | SSE, 메모리 누적, 오류·취소·저장 결과 |
+| 5 | logs.py, logging.py, middlewares.py | 사용자 격리, total, request_id, 측정 범위 |
+| 6 | check_logs.py, check_logs.sql, 기존 테스트 | 모집단 차이와 코드·테스트·운영 근거 구분 |
+
+이번 대화에서는 API/REST/FastAPI, SSE/SSR, 데코레이터, 스트림 저장과 검색 가능성을 소개했다. 소개받았다는 사실을 이해 완료로 간주하지 않는다. 다음에는 원하는 회차에서 실제 함수 한 개를 따라가며 설명해 본다.
+
+확인 질문: AI 오류여도 왜 질문은 남을까? 받은 답변을 보내면서 동시에 누적할 수 있을까? 일반 예외와 취소는 어떻게 다를까? 도구 설정이 있는데도 검색했다고 확정할 수 없는 이유는 무엇일까? CLI와 API 평균이 달라지는 데이터는 무엇일까?
+
+## 9. 담당자별 실습과 작업 원칙
+
+- [인증 가이드](roles/auth_guide.md): 해시·JWT·의존성과 접근 제어.
+- [DB·로그 가이드](roles/log_db_guide.md): 저장·조회·집계와 오류 증거.
+- [AI·채팅 가이드](roles/chat_api_guide.md): 문맥·검색·스트림과 장애 처리.
+
+설치·실행 명령은 README 한 곳에서 확인한다. 테스트 전에 프로세스 설정의 DATABASE_URL을 격리 DB로, GEMINI_API_KEY를 빈 값으로 설정한다. 앱 import도 init_db를 호출하며 모든 테스트가 동일하게 격리되는 것은 아니다. 신뢰성 테스트의 isolated_chat fixture는 의존성과 생성기 DB 세션을 따로 바꾼다.
+
+실습은 담당 작업브랜치에서 코드읽기·재현·검증 순서로 진행한다. 기능변경은 목적과 테스트결과를 정리해 develop 대상PR로 제출한다.
