@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""
-One-Click Public URL Tunneling & Server Starter
-Satisfies Mission Requirement: "평가 시점에 외부 네트워크에서 접속 가능한 서비스 URL 제공"
-Usage: python scripts/run_public.py
+"""개발용 서버를 실행하고 외부 공개 도구의 사용 예를 출력하는 예전 보조 스크립트입니다.
+현재 EC2의 systemd+Caddy 배포 과정에서는 사용하지 않습니다. Popen은 별도 프로그램을 시작하고 wait는
+종료를 기다립니다.
+파일을 읽거나 주석을 붙이는 것만으로 서버가 실행되지는 않습니다. 이 스크립트를 직접 실행해야 main이 호출됩니다.
 """
 
 import subprocess
@@ -17,6 +17,8 @@ if sys.platform == "win32":
         pass
 
 def main():
+    """개발 서버를 시작하고 공개 접속 도구 안내를 출력합니다. 현재 운영 배포 절차에서는 실행하지 않습니다.
+    """
     print("=" * 65)
     print("[AI 챗봇 서비스] 외부 공개 네트워크 실행 스크립트")
     print("=" * 65)
@@ -25,8 +27,9 @@ def main():
 
     port = 8000
 
-    # Start FastAPI server
+    # 개발용 FastAPI 프로세스를 시작합니다. 현재 EC2 배포 경로는 이 도구를 사용하지 않습니다.
     print(f"FastAPI 서버 기동 중... (Port: {port})")
+    # 별도 Python 프로세스를 시작합니다. 현재 EC2의 systemd 서비스와는 다른 개발용 실행 경로입니다.
     server_process = subprocess.Popen(
         [sys.executable, "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", str(port), "--reload"],
         stdout=sys.stdout,

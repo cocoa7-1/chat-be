@@ -1,121 +1,143 @@
-# 🔬 건설 도메인 지식 Q&A AI 챗봇: 초정밀 현미경 학습 가이드 및 마스터 로드맵
+# 챗봇 학습 가이드
 
-> **문서 목적**: 본 가이드는 [AI/SW 기초 텀프로젝트] 미션 요구사항과 본 프로젝트(`chat-be` & `chat-fe`)의 실제 코드베이스 간의 정합성을 1:1로 매핑하여, 시스템의 모든 레이어를 분해하고 체계적으로 학습하기 위해 작성된 종합 엔지니어링 가이드입니다.
+사용자 행동부터 서버 처리와 DB 저장까지 읽는 공통 학습 가이드입니다. 역할별 문서는 담당 영역의 코드와 실습을 다룹니다.
 
----
+실행·API는 [README](../README.md), 평가요건은 [미션 원문](mission_requirements.md)과 [점검표](mission-checklist.md), 배포는 [배포 가이드](deployment.md)를 참고합니다.
 
-## 🧭 [Part 1] 미션의 본질적 함의와 아키텍처 정합성
+## 1. 먼저 이해할 전체 흐름
 
-### 1.1 왜 단순한 'AI API 호출'이 아닌 '웹 서비스'인가?
-단순히 터미널에서 LLM API를 호출하는 것은 수십 줄의 코드로 가능합니다. 하지만 **실제 사용자가 접속하여 사용하는 엔터프라이즈급 AI 챗봇 서비스**는 다음의 복합적인 엔지니어링 과제를 해결해야 합니다:
-
-```
-[클라이언트 (chat-fe) - Vercel]
-       │  ▲  (HTTP Request / SSE Token Stream)
-       ▼  │
-[FastAPI 웹 서버 (chat-be) - AWS EC2] ── (Request ID 추적 & 지연시간 측정 미들웨어)
-       │
-       ├── [보안/인증 계층 (Role 1)]: Bcrypt 해시 검증 + Bearer/Cookie JWT 토큰 검증
-       ├── [세션/상태 관리 (Role 3)]: 멀티 세션 CRUD + 최근 10개 롤링 윈도우 컨텍스트 조립
-       ├── [AI 스트리밍 계층 (Role 3)]: Google Gemma 4 26B 비동기 스트리밍 + 30초 타임아웃 방어 + Mock 폴백
-       ├── [관측/로깅 계층 (Role 2)]: 4대 필수 이벤트(수신, AI호출, AI완료, DB저장) 구조화 로깅
-       └── [데이터 영속화 (Role 2)]: SQLite + SQLAlchemy 2.0 ORM (사용자, 세션, 메시지, 지연시간)
-```
-
-### 1.2 미션 요구사항 vs 구현 결과 정합성 매트릭스
-
-| 미션 요구 영역 | 미션 명세 세부 요건 | 실제 구현 파일 및 함수 | 정합성 검증 결과 |
-| :--- | :--- | :--- | :---: |
-| **웹 UI & 스트리밍** | 질문 입력, 동일 화면 답변 확인, 실시간 토큰 스트리밍 | `chat-fe/index.html`, `app/api/v1/chat.py` | **100% 충족** (`text/event-stream` SSE) |
-| **사용자 인증 & 보안** | 계정 생성, 로그인, 인증 기반 접근 제어 | `app/core/security.py`, `app/api/deps.py` | **100% 충족** (Bcrypt + JWT Bearer) |
-| **대화 문맥 유지** | 이전 대화 질문/답변 고려한 연속 대화 | `gemini_service._build_context_messages` | **100% 충족** (최근 10개 롤링 윈도우) |
-| **안정성 & 타임아웃** | AI API 타임아웃(30초) 및 실패 시 친절한 에러 안내 | `gemini_service.stream_chat_response` | **100% 충족** (`AI_TIMEOUT`, Mock Fallback) |
-| **구조화된 로깅** | 4대 필수 이벤트(수신, 호출, 완료, 저장) 기록 | `app/core/logging.py`, `app/core/middlewares.py` | **100% 충족** (Request ID 연계 로거) |
-| **대화 로그 영속화** | 질문, 응답, 지연시간(ms), 상태 DB 저장 | `app/models/chat.py`, `ChatMessage` | **100% 충족** (SQLite ORM 매핑) |
-| **로그 검증 도구** | 평가자가 로그를 확인하는 Web UI / CLI / SQL 3종 | `chat-fe/logs.html`, `check_logs.py`, `check_logs.sql` | **100% 충족** (3종 검증 도구 완비) |
-| **외부 네트워크 접속** | 평가 시점에 외부에서 접속 가능한 URL 제공 | `scripts/run_public.py`, Vercel + AWS EC2 배포 | **100% 충족** (Vercel URL & 터널링 도구) |
-| **형상관리 & 협업** | Git Flow 브랜치, PR 이력, 10회 이상 커밋 | `main`, `develop`, `dev/auth`, `dev/log`, `dev/chat` | **100% 충족** (역할별 브랜치 분리) |
-
----
-
-## 🔬 [Part 2] 4인 팀 역할 분담 및 마스터 로드맵
+학습 목표는 사용자 행동부터 서버 처리와 DB 결과까지 자신의 말로 설명하는 것이다. 회차별로 개념 → 실제 코드 → 정상 결과 예측 → 실패 조건 → 설명 또는 실습 순서로 읽는다. 모르는 용어가 나오면 그 지점에서 멈추고 질문한다.
 
 ```text
-main (배포 안정 버전)
-  │
-develop (통합 개발 베이스라인)
-  ├── dev/auth      (Role 1: 인증 및 보안 모듈)
-  ├── dev/log       (Role 2: DB ORM 모델링 & 로깅 - 질문자 본인)
-  ├── dev/chat      (Role 3: AI 스트리밍 & 타임아웃)
-  └── dev/frontend  (프론트엔드 UI & Vercel 배포)
+브라우저 → Vercel: HTML/CSS/JavaScript 화면 받기
+브라우저 → 백엔드 HTTPS → Caddy → Uvicorn → FastAPI
+                                           ├─ SQLite: 계정·대화 저장
+                                           └─ Google AI API: 답변 생성
 ```
 
-- **👑 감독 (Director)**: 아키텍처 검토, PR 리뷰 및 머지, 브랜치 관리, AWS EC2 배포 및 인프라 총괄.
-- **🛡️ Role 1 (인증/보안 엔지니어)**: Bcrypt 해싱, JWT 발급/검증, 인증 의존성(`deps.py`) 구현, 건설 안전 도메인 연계.
-- **💾 Role 2 (데이터/로깅 엔지니어)**: SQLAlchemy 2.0 모델링, Request ID 미들웨어, 4대 구조화 로거, `check_logs.py`/`check_logs.sql` 작성.
-- **🤖 Role 3 (AI 파이프라인 엔지니어)**: Google AI Studio Gemma 4 26B API 연동, SSE 스트리밍 청크 제어, 30초 타임아웃 및 스마트 Mock 폴백 로직 구현.
-- **🌐 프론트엔드 (UI 엔지니어)**: TailwindCSS 반응형 화면, SSE 실시간 렌더링(`chat.js`), 대화 로그 검증 센터(`logs.html`), Vercel 배포.
+브라우저는 Vercel에서 받은 JavaScript로 백엔드에 직접 요청한다. 프런트엔드와 백엔드는 별도 저장소·배포다. BE 변경이 FE에 자동 반영되는 것은 아니다.
 
----
+Vercel 운영 주소는 운영용으로 지정된 배포를, `…-git-…` 브랜치 주소는 해당 브랜치의 최신 배포를 가리킨다. 둘이 같은 배포를 가리킬 수도 있다. 현재 FE README에는 Production 추적 브랜치가 `dev/log-frontend-integration`으로 기록돼 있다. 실제 별칭 대상은 Vercel에서 확인한다. 로그인 토큰은 브라우저의 주소별 localStorage에 저장되므로 주소가 달라지면 다시 로그인할 수 있다.
 
-## 🎯 [Part 3] 핵심 실습 과제 (Hands-on Practice)
+## 2. 용어를 역할별로 구분하기
 
-1. **타임아웃 한계치 튜닝 실험**: `.env`의 `AI_TIMEOUT_SECONDS=1`로 줄인 뒤 질문하여 `AI_TIMEOUT` 배너가 화면에 정상 출력되는지 확인.
-2. **Raw SQL 대화 로그 분석**: `python scripts/check_logs.py`를 실행하여 SQLite DB에 적재된 질문/답변/지연시간(ms) 확인.
-3. **건설 도메인 시스템 프롬프트 수정**: `.env`의 `SYSTEM_INSTRUCTION`을 수정하여 챗봇의 전문 분야 말투 변화 관찰.
+| 용어 | 의미 | 우리 프로젝트에서의 위치 |
+|---|---|---|
+| API | 다른 프로그램에 요청하는 접점 | 로그인·대화 조회·질문 요청 |
+| HTTP | 요청과 응답을 전달하는 규칙 | GET·POST·DELETE, 상태 코드·헤더 |
+| REST | 자원과 일관된 인터페이스 등으로 API를 설계하는 스타일 | `/chat/sessions` 조회·생성·삭제 |
+| FastAPI | 파이썬 웹 프레임워크 | 요청을 함수에 연결하고 데이터 검사·응답 처리 |
+| Uvicorn | FastAPI 앱을 실행하는 ASGI 서버 | HTTP 연결을 받아 앱에 전달 |
+| JSON | 데이터를 표현하는 형식 | 요청 본문·일반 API 응답·SSE의 data 내용 |
+| SSE | Server-Sent Events, 서버가 이벤트를 순차 전송하는 방식 | AI 답변 조각과 meta·done·error 이벤트 |
+| SSR | Server-Side Rendering, 서버에서 HTML을 만드는 방식 | 현재 화면은 정적 FE와 브라우저 JavaScript로 구성 |
+| SEO | 검색엔진이 콘텐츠를 찾고 이해하도록 돕는 최적화 | SSE와 별개. SSR 설명과 혼동하지 않기 |
+| ORM | 객체를 통해 DB 작업을 표현하는 도구 | SQLAlchemy의 모델·Session·쿼리 |
 
----
+REST는 설치하는 라이브러리가 아니고 FastAPI는 REST API를 구현할 수 있는 도구다. JSON을 사용하거나 GET·POST를 나누는 것만으로 REST의 모든 제약을 충족했다고 단정하지 않는다. 스트리밍은 순차 처리·전달이라는 넓은 개념이며 SSE는 그 구현 방식 중 하나다. GraphQL·RPC는 다른 API 접근 방식이고, WebSocket은 양방향 통신 방식이다.
 
-## 🧠 [Part 4] 실전 질의응답 및 누적 학습 노트 (Compounding Q&A Knowledge Base)
+REST는 Roy Fielding이 2000년 논문에서 정리했다. FastAPI는 파이썬 타입 표기와 기존 Starlette·Pydantic을 활용해 반복되는 API 개발 작업을 줄이는 방향으로 만들어졌다. 참고: [REST 원문](https://ics.uci.edu/~fielding/pubs/dissertation/abstract.htm), [FastAPI 개발 배경](https://fastapi.tiangolo.com/history-design-future/), [SSE 표준](https://html.spec.whatwg.org/multipage/server-sent-events.html).
 
-> **원칙**: 본 섹션은 개발 과정에서 팀원이 실제로 궁금해하고 탐구한 핵심 질문과 기술적 해답을 지속적으로 누적(Compounding)하는 단일 진실 공급원(SSOT)입니다.
+## 3. 파이썬 문법과 FastAPI 연결
 
-### [Q1] Git 브랜치(Branch) 개념과 왜 GitHub 웹 `main`에 구버전이 보였는가?
-- **핵심 원리**: Git에서 브랜치는 코드의 복사본이 아니라, 특정 커밋 해시를 가리키는 **'41바이트짜리 텍스트 포인터 파일'**(`.git/refs/heads/<branch_name>`)에 불과합니다.
-- **현상 원인**:
-  - `dev/log` 브랜치에 최신 커밋을 푸시했더라도, `main` 브랜치 포인터는 과거 커밋(`ab63f09`)에 머물러 있었습니다.
-  - GitHub 웹페이지의 기본 뷰(Default View)가 `main`으로 설정되어 있었기 때문에, 상단 브랜치를 `develop`이나 `dev/log`로 전환하지 않으면 구버전 README/ADR이 노출되었던 것입니다.
-- **해결 및 예방**: 작업 완료 후 `dev/log -> develop -> main` 순으로 순차 머지(PR)를 진행하여 상위 브랜치 포인터를 최신화합니다.
+```python
+@app.get('/hello')
+def hello():
+    return {'message': '안녕'}
+```
 
-### [Q2] PR(Pull Request)과 PR 템플릿의 의미, 그리고 팀 승인의 본질
-- **PR의 본질**: "내가 작업한 브랜치의 코드를 상위 브랜치(`develop` 또는 `main`)로 가져가서(Pull) 합쳐달라고 요청(Request)하는 협업 티켓"입니다.
-- **PR 템플릿(`.github/pull_request_template.md`)**:
-  - 개발자가 PR을 생성할 때 본문 작성창에 자동으로 채워지는 **'품질 보증 설문 양식'**입니다.
-  - 핵심 항목: `어떤 기능인가요?`, `작업 상세 내용`, `내가 설명할 수 있는 부분(Self-explanation)`, `아직 이해 못 한 부분`, `새로 알게 된 것`.
-- **승인(Approve)의 주체**: 작업자 본인이 승인하는 것이 아니라, PR을 올린 뒤 **코드 리뷰어(감독/동료)**가 코드를 검토하고 승인(Approve) 및 머지(Merge) 버튼을 누르는 것이 올바른 팀 협업 절차입니다.
+`@`는 파이썬 데코레이터 문법이다. 개념적으로 `hello = app.get('/hello')(hello)`와 같다. 여기서는 함수 정의 시 GET `/hello` 처리 함수로 등록하며, 요청이 들어왔을 때 함수 본문을 실행한다. 실제 대화 API는 `APIRouter`에 등록하고 `/api/v1`과 `/chat` 접두어를 붙인다.
 
-### [Q3] FastAPI 전체 요청 수명주기 (Request Lifecycle 10단계)
-- **전체 흐름 시퀀스**:
-  1. `Client`가 `GET /api/v1/logs?limit=50` (헤더에 Bearer JWT 토큰 포함) 전송.
-  2. `Uvicorn`(ASGI 비동기 서버)이 TCP 소켓 연결을 수신하여 FastAPI 앱에 이벤트 전달.
-  3. `Request ID 미들웨어`(`middlewares.py`)가 요청마다 고유 UUID를 발급하고 `request_received` 로그 출력.
-  4. 라우터 진입 직전 `Depends(get_current_user)`가 실행되어 JWT 토큰의 유효성 검증 및 서명 해독.
-  5. `Depends(get_db)`가 실행되어 SQLAlchemy SQLite 세션(`db`)을 생성하여 라우터 함수 인자로 주입.
-  6. `logs.py` 라우터 함수가 `select(ChatMessage)` 및 `select(func.count())` ORM 쿼리를 SQLite DB에 전송.
-  7. SQLite DB(`chatbot.db`)가 파일 I/O를 통해 레코드를 읽어 ORM 인스턴스로 반환.
-  8. `logs.py`가 데이터를 `ChatLogsResponse` (Pydantic DTO) 규격으로 직렬화.
-  9. 응답 반환 시 미들웨어가 HTTP 응답 헤더에 `X-Request-ID`를 첨부.
-  10. `Client`가 HTTP 200 OK와 함께 검증된 JSON 데이터를 수신하여 UI 렌더링.
+`Depends(get_current_user)`는 FastAPI가 인증 함수를 실행하고 그 결과를 인자로 제공하도록 선언한다. `get_current_user` 자체도 `Depends(get_db)`로 DB 세션을 받아 서명·만료 확인 뒤 사용자 존재·활성 상태를 조회한다. 정확한 의존성 순서는 의존 관계를 읽어 판단한다.
 
-### [Q4] `requirements.txt` vs `uv` 패키지 관리의 역할 분담
-- **질문**: "`uv`를 쓰는데 `requirements.txt`가 왜 여전히 필요한가요?"
-- **해답**:
-  - `requirements.txt`는 파이썬 생태계의 **"표준 의존성 명세서(Specification Sheet)"**입니다.
-  - `uv`는 그 명세서를 버리는 것이 아니라, **명세서를 10-100배 빠른 속도로 설치해주는 '초고속 실행 엔진'(`uv pip install -r requirements.txt`)**입니다.
-  - 팀원 중 `uv`가 없는 개발자나 AWS EC2/클라우드 배포 스크립트(`pip install -r requirements.txt`)와의 100% 호환성을 보장하기 위해 `requirements.txt`는 단일 진실 공급원(SSOT)으로 반드시 유지해야 합니다.
+`yield`는 값을 하나 전달하고 실행을 이어갈 수 있게 하는 문법이다. `get_db`에서는 DB 세션을 제공하고 사용 뒤 닫는 데, AI 서비스에서는 답변 조각을 전달하는 데 쓴다. `async def`라고 선언했다고 함수 안의 동기 DB 작업까지 비동기가 되는 것은 아니다.
 
-### [Q5] 4대 표준 로깅 이벤트와 지연시간(Latency) 추적 원리
-- **4대 필수 이벤트**:
-  1. `request_received`: 요청 수신 시각, 경로, 클라이언트 IP, `request_id` 기록.
-  2. `ai_call_start`: Google Gemma 4 26B API 호출 직전 타임스탬프 기록.
-  3. `ai_call_success` (또는 `ai_call_error`): 스트리밍 완료 후 총 소요 시간(`latency_ms`) 및 토큰 수 기록.
-  4. `db_save_success`: DB에 질문/답변/지연시간 레코드가 커밋된 직후 기록.
-- **지연시간 측정 공식**:
-  $$\text{latency\_ms} = (\text{time}_{\text{end}} - \text{time}_{\text{start}}) \times 1000$$
-- **가치**: 분산 시스템에서 특정 질문의 병목 구간이 네트워크인지, AI 추론인지, DB 쓰기인지 `request_id` 하나로 단숨에 추적(Distributed Tracing) 가능.
+## 4. 한 질문의 처리 순서
 
-### [Q6] SQLite 동시성 락(`database is locked`) 방어 원리
-- **원인**: SQLite는 파일 기반 DB이므로 쓰기(Write) 작업 시 파일 전체에 배타적 락(Exclusive Lock)을 겁니다.
-- **방어 메커니즘**:
-  - `app/core/database.py`에서 `connect_args={"check_same_thread": False, "timeout": 30}`을 설정하여, 동시 쓰기 경합 시 즉시 에러를 내지 않고 최대 30초간 대기(Wait Queue) 후 순차 커밋하도록 보장합니다.
+읽을 코드: [chat.py](../app/api/v1/chat.py), [AI 서비스](../app/services/gemini_service.py), [인증 의존성](../app/api/deps.py). 화면의 요청·수신은 프런트 저장소 `js/chat.js`에 있다.
 
+1. 브라우저가 Bearer 토큰, 질문, 선택적 session_id를 POST `/api/v1/chat/stream`으로 보낸다.
+2. 인증·입력 검증 후 요청 횟수와 동시 처리 제한을 검사한다. 제한 거절은 HTTP 429이며 질문 저장·AI 호출을 하지 않는다.
+3. 소유한 대화방을 찾거나 새로 만들고 질문을 저장한다. 새 대화방과 질문은 한 트랜잭션에서 commit하므로 초기 저장 실패 시 둘 다 rollback한다.
+4. 현재 질문 ID를 제외한 이력을 읽어 스냅샷으로 준비한다. 질문 commit 후 스트리밍 응답을 시작한다.
+5. 생성기에서 별도 `SessionLocal` DB 세션을 열고 meta 이벤트를 보낸다.
+6. AI 서비스는 이전 메시지의 마지막 `MAX_HISTORY_MESSAGES`개와 현재 질문을 전달한다. 기본 10은 질문·답변 각각을 세는 메시지 수다. DB 이력 조회 자체는 전체를 읽는다.
+7. 받은 답변 조각을 서비스의 `full_response`에 누적하면서 API에 전달한다. API는 SSE로 브라우저에 보내고, 화면도 받은 내용을 누적해서 표시한다.
+8. AI 서비스의 최종 결과를 받은 뒤 답변을 별도 트랜잭션으로 저장한다. 그다음 done 이벤트를 보낸다.
+
+현재 질문·답변은 별도 행·별도 commit이다. 답변을 조각마다 저장하지 않는다. 존재하지 않거나 다른 사용자 소유의 session_id를 전달하면 현재 스트림 코드는 새 대화방을 만든다. 조회·삭제 API의 404 처리와 구별한다.
+
+## 5. 실패하면 무엇이 남는가?
+
+| 조건 | 결과 |
+|---|---|
+| 초기 세션·질문 저장 실패 | HTTP 500 JSON. 자동 생성 세션과 질문 rollback, AI 호출 안 함 |
+| AI 정상 종료 | 전체 답변을 status=success로 저장한 뒤 done |
+| AI 시간 초과 | 부분 답변 + 오류 안내를 status=error, error_message=AI_TIMEOUT으로 저장하는 경로 |
+| 일반 AI 호출 예외 | 부분 답변 + 오류 안내를 status=error, error_message=AI_SERVICE_ERROR로 저장하는 경로 |
+| 저장 전 작업 취소·서버 종료 | 부분 답변 저장을 보장하지 못함. 이미 commit된 질문은 남음 |
+| 답변 commit 실패 | 해당 답변 rollback, 질문은 남음. SSE error 안내 경로 |
+
+AI 오류 결과도 후속 DB 저장이 성공해야 보존된다. 연결이 끊겼을 때 이미 답변 commit을 끝냈다면 답변은 남을 수 있다. 화면에 보였다는 사실과 DB에 저장됐다는 사실을 구분한다. 현재 취소 시 부분 답변 저장·주기적 체크포인트·이어받기는 구현하지 않았다.
+
+연결 시작과 매 응답 읽기에 같은 deadline을 사용한다. 일반요청은 `AI_TIMEOUT_SECONDS` 기본60초, 검색요청은 `AI_SEARCH_TIMEOUT_SECONDS` 기본90초이며 SDK스트림정리는 별도로 최대1초다. 인증·DB저장·전송은 이 AI제한시간과 별개다. 취소는 호출자로 전파된다.
+
+SSE를 시작한 뒤에는 HTTP 200인 상태에서도 AI 오류가 발생할 수 있다. 브라우저는 HTTP 상태뿐 아니라 done의 status/error와 error 이벤트도 읽어야 한다. 현재 FE는 fetch로 스트림을 직접 읽고 자동 재연결·재개 기능은 제공하지 않는다.
+
+## 6. AI 모델·Mock·웹 검색
+
+현재 기본 모델은 `gemma-4-26b-a4b-it`이다. 모델 학습 지식과 실시간 웹 검색은 별개다. 현재 로컬 코드에는 `GEMINI_SEARCH_ENABLED=True`일 때 `tools=[{'google_search': {}}]`를 전달하는 변경이 있다. False이면 도구를 제공하지 않는다. 도구 제공과 실제 검색 실행은 구별하며, 검색 여부는 모델이 판단한다.
+
+검색연결은 [Gemma Google Search](https://ai.google.dev/gemma/docs/core/gemma_on_gemini_api#google-search)를 따른다. 실제실행은 grounding metadata의 검색어/출처로 구분한다. 출처는 답변본문에 붙여 DB에 저장하고 검색상태·검색제안은 SSE done으로 전달한다. 검색거절·옵션오류·사용량제한·빈답변을 분류하며 다른모델로 자동 전환하지 않는다.
+
+키가 없으면 Demo 응답을 생성하고, 키가 있는데 SDK 초기화가 실패하면 AI_INIT_ERROR로 안내한다. Mock는 준비한 문자열을 나눠 보내는 연결 시험용이다. 실제 검색·실제 모델의 문맥 이해·응답 품질을 검증하지 않는다. SDK호출 오류는 공급자코드/고정원인분류로 추적하며 예외원문은 노출하지 않는다.
+
+## 7. DB와 로그 읽기
+
+```text
+User id=7
+  └─ ChatSession id=12, user_id=7
+       ├─ ChatMessage id=31, role=user, content=질문, status=success
+       └─ ChatMessage id=32, role=assistant, content=답변, status=success
+```
+
+숫자는 예시다. ChatSession은 DB에 저장하는 대화방이고, SQLAlchemy Session은 DB 작업 객체다. PK는 행의 식별자, FK는 다른 행의 참조, relationship은 파이썬 객체 사이의 접근 관계다. 현재 모델은 `Column`을 사용한다. `create_all()`은 기존 테이블 컬럼 변경을 수행하지 않는다.
+
+DB 대화 기록은 다시 보여줄 데이터이고 `logs/server.log`는 운영 이벤트다. 저장 이벤트에는 request_id와 entity가 있으나 ChatMessage 행에는 request_id·turn_id 필드가 없다. 미들웨어는 요청 헤더의 X-Request-ID를 재사용하거나 UUID 앞 8자를 만들므로 매번 전체 UUID를 새로 발급하는 구조는 아니다. 미들웨어가 모든 요청에 request_received를 기록하지 않으며 이벤트는 호출 위치를 확인해야 한다.
+
+AI latency_ms는 AI 서비스 시작부터 결과 생성까지의 시간이며 전체 요청 시간과 다르다. X-Process-Time-Ms도 call_next 반환까지 측정하므로 마지막 SSE 조각까지의 시간으로 해석하지 않는다. 생성기의 db_save_failed는 여러 종류의 예외를 잡는 위치여서 이름만으로 DB 원인이라고 단정하지 않는다.
+
+| 집계 도구 | 평균 지연시간 대상 |
+|---|---|
+| `/logs/stats` | 성공 assistant 중 0·None을 제외 |
+| `scripts/check_logs.py` | assistant의 성공·오류를 포함하고 0·None을 제외 |
+| `scripts/check_logs.sql` 사용자별 통계 | 성공 assistant, 0 포함·NULL 제외 |
+
+`/logs`의 total은 필터에 맞는 전체 메시지 수다. 일반 사용자는 자기 데이터만, 관리자는 필터 또는 전체 데이터를 조회한다. `/logs/stats` 성공률은 성공 답변 수 / 질문 수이며 질문이 없으면 100%다. 질문 행의 success는 질문 저장을 뜻하고 AI 성공을 뜻하지 않는다.
+
+database.py에는 SQLite의 `check_same_thread=False`만 명시돼 있다. `timeout=30`, WAL, 외래키 PRAGMA 활성화는 코드에 선언돼 있지 않다. 스레드 검사 해제는 동시 쓰기·DB 잠금 해결을 보장하지 않는다. ORM cascade 삭제와 DB 외래키 강제는 다른 층위다.
+
+## 8. 학습 순서와 확인 질문
+
+| 회차 | 읽을 코드 | 설명할 수 있어야 할 것 |
+|---|---|---|
+| 1 | main.py, models/user.py, models/chat.py | 화면·서버·DB와 두 종류의 세션 |
+| 2 | deps.py, schemas/auth.py, security.py | Depends, 입력 검사, 해시·JWT·사용자 조회 |
+| 3 | database.py, chat.py 초기 저장 | add/flush/commit/rollback과 질문 저장 경계 |
+| 4 | chat.py 생성기, gemini_service.py | SSE, 메모리 누적, 오류·취소·저장 결과 |
+| 5 | logs.py, logging.py, middlewares.py | 사용자 격리, total, request_id, 측정 범위 |
+| 6 | check_logs.py, check_logs.sql, 기존 테스트 | 모집단 차이와 코드·테스트·운영 근거 구분 |
+
+이번 대화에서는 API/REST/FastAPI, SSE/SSR, 데코레이터, 스트림 저장과 검색 가능성을 소개했다. 소개받았다는 사실을 이해 완료로 간주하지 않는다. 다음에는 원하는 회차에서 실제 함수 한 개를 따라가며 설명해 본다.
+
+확인 질문: AI 오류여도 왜 질문은 남을까? 받은 답변을 보내면서 동시에 누적할 수 있을까? 일반 예외와 취소는 어떻게 다를까? 도구 설정이 있는데도 검색했다고 확정할 수 없는 이유는 무엇일까? CLI와 API 평균이 달라지는 데이터는 무엇일까?
+
+## 9. 담당자별 실습과 작업 원칙
+
+- [인증 가이드](roles/auth_guide.md): 해시·JWT·의존성과 접근 제어.
+- [DB·로그 가이드](roles/log_db_guide.md): 저장·조회·집계와 오류 증거.
+- [AI·채팅 가이드](roles/chat_api_guide.md): 문맥·검색·스트림과 장애 처리.
+
+설치·실행 명령은 README 한 곳에서 확인한다. 테스트 전에 프로세스 설정의 DATABASE_URL을 격리 DB로, GEMINI_API_KEY를 빈 값으로 설정한다. 앱 import도 init_db를 호출하며 모든 테스트가 동일하게 격리되는 것은 아니다. 신뢰성 테스트의 isolated_chat fixture는 의존성과 생성기 DB 세션을 따로 바꾼다.
+
+실습은 담당 작업브랜치에서 코드읽기·재현·검증 순서로 진행한다. 기능변경은 목적과 테스트결과를 정리해 develop 대상PR로 제출한다.
