@@ -157,6 +157,7 @@ DATABASE_URL=sqlite:///./test.db GEMINI_API_KEY="" APP_ENV=test uv run pytest te
 |---|---|
 | 감독 / dolphin1404 (Kyumin Lee) | PR 템플릿 작성, 리뷰·통합 관리 담당 |
 | 인증 / bwmin | 닉네임 모델·스키마, 비밀번호 정책/변경 API, 검증 오류 처리와 인증 회귀 테스트 |
+| AI·채팅 / heeyoung35 | AI 연동·응답 스트리밍(SSE)·대화 문맥 유지 영역 담당 |
 | DB·로그·AI·FE 통합 / feelosophysics (alzznd) | 초기 BE/AI/SSE·문맥 구현, 페이지네이션·통계·CLI/SQL·DB테스트, 도메인 프롬프트·문서, FE연동/UI·AI옵션/오류·운영 보완 |
 
 Git 이력의 alzznd와 feelosophysics는 같은 작성자입니다. 위 구현 요약은 실제 커밋 기준입니다. 개인 작업 브랜치 → develop 대상 PR → develop → main PR 흐름으로 개별 커밋을 보존해 통합합니다. 평가 전 최종 통합·배포는 owner 요청으로 진행하며, 리뷰 요청 상태와 실제 승인 여부는 PR에서 확인할 수 있습니다.
